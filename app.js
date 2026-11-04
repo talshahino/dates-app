@@ -1,0 +1,560 @@
+import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
+import { SUPABASE_URL, SUPABASE_KEY, COUPLE_EMAIL, PROFILES } from './config.js';
+
+const sb = createClient(SUPABASE_URL, SUPABASE_KEY, {
+  auth: { persistSession: true, autoRefreshToken: true, storageKey: 'dates-auth' },
+});
+
+// ---------------- state ----------------
+const S = {
+  me: lsGet('dates-profile'),
+  tab: 'home',
+  voteMode: 'random',
+  ideas: [],
+  votes: [],      // {idea_id, profile, value}
+  dates: [],
+  messages: [],
+  currentIdeaId: null,
+  unread: 0,
+  lastSeenMsg: Number(lsGet('dates-last-seen') || 0),
+  channel: null,
+};
+
+const CAT = {
+  food:        { label: 'אוכל',        em: '🍽️' },
+  spa:         { label: 'ספא ופינוק',  em: '💆‍♀️' },
+  shopping:    { label: 'קניות',        em: '🛍️' },
+  experiences: { label: 'חוויות',       em: '🎭' },
+  people:      { label: 'עם חברים',     em: '🥂' },
+};
+const DUR = {
+  short: 'עד שעתיים', evening: 'ערב', halfday: 'חצי יום', fullday: 'יום שלם', overnight: 'לילה',
+};
+
+// ---------------- helpers ----------------
+function lsGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
+function lsSet(k, v) { try { localStorage.setItem(k, v); } catch {} }
+function lsDel(k) { try { localStorage.removeItem(k); } catch {} }
+const $ = (s, r = document) => r.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const nameOf = (p) => PROFILES[p]?.name ?? '';
+const partner = () => PROFILES[S.me]?.partner;
+
+function toast(text) {
+  const t = $('#toast');
+  t.textContent = text; t.hidden = false;
+  clearTimeout(toast._t); toast._t = setTimeout(() => (t.hidden = true), 2600);
+}
+
+function todayStr(offsetDays = 0) {
+  const d = new Date(); d.setDate(d.getDate() + offsetDays);
+  return d.toLocaleDateString('en-CA'); // YYYY-MM-DD local
+}
+function fmtDate(dstr) {
+  if (!dstr) return '';
+  if (dstr === todayStr()) return 'היום';
+  if (dstr === todayStr(1)) return 'מחר';
+  const d = new Date(dstr + 'T12:00:00');
+  return d.toLocaleDateString('he-IL', { weekday: 'long', day: 'numeric', month: 'long' });
+}
+const fmtTime = (t) => (t ? t.slice(0, 5) : '');
+const ideaById = (id) => S.ideas.find((i) => i.id === id);
+const voteOf = (ideaId, profile) => S.votes.find((v) => v.idea_id === ideaId && v.profile === profile)?.value ?? 0;
+const isMatch = (ideaId) => voteOf(ideaId, 'tal') === 1 && voteOf(ideaId, 'eilat') === 1;
+
+// ---------------- boot ----------------
+boot();
+
+async function boot() {
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  const { data } = await sb.auth.getSession();
+  if (!data.session) return renderLogin();
+  if (!S.me || !PROFILES[S.me]) return renderPicker();
+  await startApp();
+}
+
+function renderLogin(errText = '') {
+  $('#app').innerHTML = `
+    <div class="center-screen"><div class="hero">
+      <div class="logo">♥</div>
+      <h1>הדייטים שלנו</h1>
+      <p>מקום קטן רק לשניכם, לתכנן את הפינוק הבא.</p>
+      <form id="login-form">
+        <label class="field"><span>הקוד הזוגי</span>
+          <input id="code" type="password" autocomplete="current-password" placeholder="הקוד שבחרתם" required>
+        </label>
+        <button class="btn" type="submit">כניסה</button>
+        <div class="err">${esc(errText)}</div>
+      </form>
+    </div></div>`;
+  $('#login-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = e.target.querySelector('button'); btn.disabled = true;
+    const { error } = await sb.auth.signInWithPassword({ email: COUPLE_EMAIL, password: $('#code').value });
+    if (error) return renderLogin('הקוד לא נכון. נסו שוב.');
+    S.me && PROFILES[S.me] ? startApp() : renderPicker();
+  });
+}
+
+function renderPicker() {
+  $('#app').innerHTML = `
+    <div class="center-screen"><div class="hero">
+      <div class="logo">♥</div>
+      <h1>מי את/ה?</h1>
+      <p>בוחרים פעם אחת במכשיר הזה.</p>
+      <div class="pick">
+        <button data-pick="tal">אני טל<small>הצבעות והודעות יופיעו בשמך</small></button>
+        <button data-pick="eilat">אני אילת<small>הצבעות והודעות יופיעו בשמך</small></button>
+      </div>
+    </div></div>`;
+  $('#app').querySelectorAll('[data-pick]').forEach((b) =>
+    b.addEventListener('click', () => { S.me = b.dataset.pick; lsSet('dates-profile', S.me); startApp(); }));
+}
+
+async function startApp() {
+  const params = new URLSearchParams(location.search);
+  if (params.get('tab')) S.tab = params.get('tab');
+  renderShell();
+  await loadAll();
+  subscribe();
+  render();
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) loadAll().then(render); });
+}
+
+async function loadAll() {
+  const [ideas, votes, dates, msgs] = await Promise.all([
+    sb.from('ideas').select('*').order('id'),
+    sb.from('votes').select('*'),
+    sb.from('dates').select('*').order('date_on').order('time_at', { nullsFirst: false }),
+    sb.from('messages').select('*').order('created_at', { ascending: false }).limit(200),
+  ]);
+  if (ideas.error?.status === 401 || ideas.error?.code === 'PGRST301') { await sb.auth.signOut(); return renderLogin(); }
+  S.ideas = ideas.data || [];
+  S.votes = votes.data || [];
+  S.dates = dates.data || [];
+  S.messages = (msgs.data || []).reverse();
+  computeUnread();
+}
+
+function subscribe() {
+  if (S.channel) sb.removeChannel(S.channel);
+  S.channel = sb.channel('couple')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, (p) => {
+      if (p.eventType === 'INSERT') {
+        if (!S.messages.some((m) => m.id === p.new.id)) S.messages.push(p.new);
+        if (p.new.profile !== S.me && S.tab !== 'chat') toast(`💬 ${nameOf(p.new.profile)}: ${p.new.body || 'שלח/ה רעיון'}`);
+      } else if (p.eventType === 'DELETE') {
+        S.messages = S.messages.filter((m) => m.id !== p.old.id);
+      }
+      computeUnread(); render();
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'votes' }, async () => {
+      const { data } = await sb.from('votes').select('*'); S.votes = data || []; render(true);
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'dates' }, async () => {
+      const { data } = await sb.from('dates').select('*').order('date_on').order('time_at', { nullsFirst: false });
+      S.dates = data || []; render(true);
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'ideas' }, async () => {
+      const { data } = await sb.from('ideas').select('*').order('id'); S.ideas = data || []; render(true);
+    })
+    .subscribe();
+}
+
+function computeUnread() {
+  if (S.tab === 'chat') {
+    const last = S.messages.at(-1);
+    if (last) { S.lastSeenMsg = last.id; lsSet('dates-last-seen', String(last.id)); }
+  }
+  S.unread = S.messages.filter((m) => m.id > S.lastSeenMsg && m.profile !== S.me).length;
+}
+
+// ---------------- shell ----------------
+function renderShell() {
+  $('#app').innerHTML = `
+    <header class="topbar">
+      <h1 id="title"></h1>
+      <button class="who" id="who" title="החלפת משתמש"></button>
+    </header>
+    <main id="main"></main>
+    <div id="composer-slot"></div>
+    <nav class="tabbar" id="tabbar">
+      ${[['home', '🏠', 'בית'], ['vote', '💞', 'הצבעה'], ['dates', '📅', 'הדייטים'], ['chat', '💬', 'צ׳אט']]
+        .map(([k, ic, l]) => `<button data-tab="${k}"><span class="ic">${ic}</span>${l}</button>`).join('')}
+    </nav>`;
+  $('#tabbar').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-tab]'); if (!b) return;
+    go(b.dataset.tab);
+  });
+  $('#who').addEventListener('click', openSettings);
+  $('#main').addEventListener('click', onMainClick);
+}
+
+function go(tab) {
+  S.tab = tab; computeUnread(); render(); window.scrollTo(0, 0);
+  if (tab === 'chat') requestAnimationFrame(() => window.scrollTo(0, document.body.scrollHeight));
+}
+
+let lastRenderKey = '';
+function render(soft = false) {
+  const titles = { home: 'הדייטים שלנו', vote: 'הצבעה משותפת', dates: 'הדייטים שלנו', chat: `צ׳אט עם ${nameOf(partner())}` };
+  $('#title').textContent = titles[S.tab];
+  $('#who').textContent = `${nameOf(S.me)} · החלפה`;
+  $('#tabbar').querySelectorAll('[data-tab]').forEach((b) => {
+    b.classList.toggle('on', b.dataset.tab === S.tab);
+    b.querySelector('.badge')?.remove();
+    if (b.dataset.tab === 'chat' && S.unread > 0) b.insertAdjacentHTML('beforeend', `<span class="badge">${S.unread}</span>`);
+  });
+  // keep the current random idea stable on soft re-renders
+  if (soft && S.tab === 'vote' && S.voteMode === 'random') { $('#main').innerHTML = viewVote(); return; }
+  const views = { home: viewHome, vote: viewVote, dates: viewDates, chat: viewChat };
+  const wasAtBottom = S.tab === 'chat' && (window.innerHeight + window.scrollY >= document.body.scrollHeight - 80);
+  $('#main').innerHTML = views[S.tab]();
+  $('#composer-slot').innerHTML = S.tab === 'chat' ? composerHtml() : '';
+  if (S.tab === 'chat') bindComposer();
+  const key = S.tab + S.messages.length;
+  if (S.tab === 'chat' && (wasAtBottom || key !== lastRenderKey)) window.scrollTo(0, document.body.scrollHeight);
+  lastRenderKey = key;
+}
+
+// ---------------- views ----------------
+function upcoming() {
+  const t = todayStr();
+  return S.dates.filter((d) => d.status === 'planned' && d.date_on >= t);
+}
+
+function viewHome() {
+  const up = upcoming();
+  const today = up.filter((d) => d.date_on === todayStr());
+  const matches = S.ideas.filter((i) => isMatch(i.id));
+  const pendingForMe = S.ideas.filter((i) => voteOf(i.id, partner()) === 1 && voteOf(i.id, S.me) === 0);
+  const hour = new Date().getHours();
+  const hello = hour < 12 ? 'בוקר טוב' : hour < 18 ? 'צהריים טובים' : 'ערב טוב';
+
+  let html = `<div class="greet"><p class="muted small" style="margin:0">${hello},</p><h2>${esc(nameOf(S.me))} ♥</h2></div>`;
+
+  for (const d of today) {
+    html += `<div class="card reminder">
+      <div class="kicker">⏰ תזכורת · היום${d.time_at ? ' ב-' + fmtTime(d.time_at) : ''}</div>
+      <h2>${esc(d.title)}</h2>
+      ${d.place ? `<div>📍 ${esc(d.place)}</div>` : ''}
+      ${d.notes ? `<div class="note">📝 ${esc(d.notes)}</div>` : ''}
+    </div>`;
+  }
+
+  const next = up.find((d) => d.date_on !== todayStr());
+  if (next) {
+    html += `<h3 class="section-title">הדייט הבא</h3>${dateCard(next)}`;
+  } else if (!today.length) {
+    html += `<div class="card"><h3 style="font-size:22px">עוד לא קבעתם דייט השבוע</h3>
+      <p class="muted" style="margin:6px 0 14px">בואו נמצא רעיון ששניכם אוהבים.</p>
+      <button class="btn rose" data-act="goto" data-tab="vote">🎲 להצבעה</button></div>`;
+  }
+
+  html += `<div class="quick" style="margin-top:6px">
+    <button data-act="goto" data-tab="vote"><span class="ic">💞</span><b>${matches.length} התאמות</b><span class="muted small">רעיונות ששניכם אהבתם</span></button>
+    <button data-act="goto" data-tab="chat"><span class="ic">💬</span><b>${S.unread ? S.unread + ' הודעות חדשות' : 'צ׳אט'}</b><span class="muted small">לדבר על הדייט הבא</span></button>
+  </div>`;
+
+  if (pendingForMe.length) {
+    html += `<div class="card" style="margin-top:14px"><b>${esc(nameOf(partner()))} אהב/ה ${pendingForMe.length} רעיונות שעוד לא הצבעת עליהם</b>
+      <p class="muted small" style="margin:4px 0 12px">אולי יש פה התאמה שמחכה.</p>
+      <button class="btn small ghost" data-act="vote-pending">לראות</button></div>`;
+  }
+  return html;
+}
+
+function pickRandomIdea(preferPending = false) {
+  const pool = S.ideas.filter((i) => voteOf(i.id, S.me) === 0);
+  const pending = pool.filter((i) => voteOf(i.id, partner()) === 1);
+  const src = preferPending && pending.length ? pending : (pool.length ? pool : S.ideas);
+  const others = src.filter((i) => i.id !== S.currentIdeaId);
+  const arr = others.length ? others : src;
+  S.currentIdeaId = arr.length ? arr[Math.floor(Math.random() * arr.length)].id : null;
+}
+
+function viewVote() {
+  let html = `<div class="seg">
+    <button data-act="vmode" data-mode="random" class="${S.voteMode === 'random' ? 'on' : ''}">🎲 רעיון אקראי</button>
+    <button data-act="vmode" data-mode="matches" class="${S.voteMode === 'matches' ? 'on' : ''}">💞 התאמות</button>
+  </div>`;
+
+  if (S.voteMode === 'matches') {
+    const matches = S.ideas.filter((i) => isMatch(i.id));
+    const theyLiked = S.ideas.filter((i) => voteOf(i.id, partner()) === 1 && voteOf(i.id, S.me) !== 1);
+    if (!matches.length) {
+      html += `<div class="empty"><span class="ic">💞</span>עוד אין התאמות.<br>כששניכם אוהבים את אותו רעיון, הוא יופיע כאן.</div>`;
+    } else {
+      html += matches.map((i) => ideaRow(i, true)).join('');
+    }
+    if (theyLiked.length) {
+      html += `<h3 class="section-title">${esc(nameOf(partner()))} אהב/ה</h3>` + theyLiked.map((i) => ideaRow(i, false)).join('');
+    }
+    html += `<div class="foot"><button class="linkish" data-act="add-idea">+ להוסיף רעיון משלנו</button></div>`;
+    return html;
+  }
+
+  if (!S.currentIdeaId || !ideaById(S.currentIdeaId)) pickRandomIdea(true);
+  const idea = ideaById(S.currentIdeaId);
+  if (!idea) return html + `<div class="empty"><span class="ic">🌱</span>אין עדיין רעיונות במאגר.</div>`;
+
+  const mine = voteOf(idea.id, S.me);
+  const theirs = voteOf(idea.id, partner());
+  const pn = nameOf(partner());
+  let note = '';
+  if (isMatch(idea.id)) note = `💞 יש התאמה! שניכם אהבתם`;
+  else if (theirs === 1) note = `${esc(pn)} אהב/ה את זה 💕`;
+  else if (theirs === -1) note = `${esc(pn)} פחות התלהב/ה מזה`;
+
+  html += `<div class="idea-card">
+    <div class="idea-art">${CAT[idea.category]?.em ?? '✨'}</div>
+    <div class="idea-body">
+      <h2>${esc(idea.title)}</h2>
+      ${idea.description ? `<p class="muted" style="margin:0">${esc(idea.description)}</p>` : ''}
+      <div class="chips">
+        <span class="chip">${CAT[idea.category]?.label ?? ''}</span>
+        <span class="chip">${DUR[idea.duration] ?? ''}</span>
+        <span class="chip">כ-${idea.cost} ₪</span>
+        ${mine === 1 ? '<span class="chip rose">אהבת ♥</span>' : mine === -1 ? '<span class="chip">סימנת לא</span>' : ''}
+      </div>
+      ${note ? `<div class="partner-note">${note}</div>` : ''}
+    </div>
+  </div>
+  <div class="vote-actions">
+    <button class="round no" data-act="vote" data-v="-1">✕ לא בשבילי</button>
+    <button class="round dice" data-act="next" aria-label="רעיון אחר">🎲</button>
+    <button class="round yes" data-act="vote" data-v="1">♥ אהבתי</button>
+  </div>
+  <div class="idea-tools">
+    <button class="btn ghost small" data-act="to-chat" data-id="${idea.id}">💬 לדבר על זה</button>
+    <button class="btn small" data-act="schedule" data-id="${idea.id}">📅 קבעו דייט</button>
+  </div>
+  <div class="foot"><button class="linkish" data-act="add-idea">+ להוסיף רעיון משלנו</button></div>`;
+  return html;
+}
+
+function ideaRow(i, matched) {
+  return `<div class="list-item">
+    <div class="em">${CAT[i.category]?.em ?? '✨'}</div>
+    <div class="txt"><b>${esc(i.title)}</b><span class="muted small">${DUR[i.duration] ?? ''} · כ-${i.cost} ₪</span></div>
+    <div class="acts">
+      ${matched ? `<button class="btn small" data-act="schedule" data-id="${i.id}">📅 קבעו</button>`
+                : `<button class="btn small rose" data-act="vote-id" data-id="${i.id}" data-v="1">♥ גם אני</button>`}
+      <button class="btn small ghost" data-act="to-chat" data-id="${i.id}">💬</button>
+    </div>
+  </div>`;
+}
+
+function dateCard(d) {
+  const past = d.status !== 'planned' || d.date_on < todayStr();
+  return `<div class="card date-card ${past ? 'past' : ''}">
+    <div class="when">${fmtDate(d.date_on)}${d.time_at ? ' · ' + fmtTime(d.time_at) : ''}</div>
+    <h3>${esc(d.title)}</h3>
+    ${d.place ? `<div class="muted small">📍 ${esc(d.place)}</div>` : ''}
+    ${d.notes ? `<div class="note">📝 ${esc(d.notes)}</div>` : ''}
+    <div class="muted small" style="margin-top:6px">נקבע ע״י ${esc(nameOf(d.created_by))}${d.status === 'done' ? ' · ✓ היה' : d.status === 'cancelled' ? ' · בוטל' : ''}</div>
+    <div class="acts">
+      <button class="btn small ghost" data-act="edit-date" data-id="${d.id}">עריכה</button>
+      ${d.status === 'planned' ? `<button class="btn small ghost" data-act="done-date" data-id="${d.id}">✓ היה</button>` : ''}
+    </div>
+  </div>`;
+}
+
+function viewDates() {
+  const up = upcoming();
+  const past = S.dates.filter((d) => !up.includes(d)).reverse();
+  let html = '';
+  html += `<button class="btn rose" style="margin:6px 0 4px" data-act="schedule-free">📅 לקבוע דייט חדש</button>`;
+  html += `<h3 class="section-title">מתוכננים</h3>`;
+  html += up.length ? up.map(dateCard).join('') : `<div class="empty"><span class="ic">🗓️</span>אין דייטים מתוכננים כרגע.</div>`;
+  if (past.length) html += `<h3 class="section-title">היו</h3>` + past.slice(0, 20).map(dateCard).join('');
+  return html;
+}
+
+function viewChat() {
+  if (!S.messages.length) {
+    return `<div class="empty"><span class="ic">💬</span>כאן מדברים על הדייט הבא.<br>אפשר גם לשלוח רעיון מההצבעה.</div><div class="chat"></div>`;
+  }
+  let html = '<div class="chat">';
+  let lastDay = '';
+  for (const m of S.messages) {
+    const day = new Date(m.created_at).toLocaleDateString('en-CA');
+    if (day !== lastDay) { html += `<div class="day-sep">${fmtDate(day)}</div>`; lastDay = day; }
+    const idea = m.idea_id ? ideaById(m.idea_id) : null;
+    const time = new Date(m.created_at).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
+    html += `<div class="msg ${m.profile === S.me ? 'me' : 'them'}">${esc(m.body || '')}${idea ? `
+      <div class="attached"><b>${CAT[idea.category]?.em ?? ''} ${esc(idea.title)}</b>
+        <span class="small">${DUR[idea.duration] ?? ''} · כ-${idea.cost} ₪</span>
+        <div><button data-act="schedule" data-id="${idea.id}">📅 קבעו דייט</button>
+        ${voteOf(idea.id, S.me) !== 1 ? ` · <button data-act="vote-id" data-id="${idea.id}" data-v="1">♥ אהבתי</button>` : ''}</div>
+      </div>` : ''}<span class="meta">${time}</span></div>`;
+  }
+  return html + '</div>';
+}
+
+function composerHtml() {
+  return `<form class="composer" id="composer">
+    <button type="button" class="attach" data-act-c="attach" aria-label="שליחת רעיון">🎲</button>
+    <textarea id="msg" rows="1" placeholder="מה בא לך השבוע?"></textarea>
+    <button class="send" type="submit" aria-label="שליחה">➤</button>
+  </form>`;
+}
+function bindComposer() {
+  const f = $('#composer'); const ta = $('#msg');
+  ta.addEventListener('input', () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 120) + 'px'; });
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const body = ta.value.trim(); if (!body) return;
+    ta.value = ''; ta.style.height = '';
+    await sendMessage({ body });
+  });
+  f.querySelector('[data-act-c="attach"]').addEventListener('click', () => {
+    const pool = S.ideas.filter((i) => voteOf(i.id, S.me) !== -1);
+    const idea = pool[Math.floor(Math.random() * pool.length)];
+    if (idea) sendMessage({ body: 'מה דעתך על זה? 🎲', idea_id: idea.id });
+  });
+}
+
+async function sendMessage({ body, idea_id = null }) {
+  const { data, error } = await sb.from('messages').insert({ profile: S.me, body, idea_id }).select().single();
+  if (error) return toast('ההודעה לא נשלחה, נסו שוב');
+  if (!S.messages.some((m) => m.id === data.id)) S.messages.push(data);
+  computeUnread(); if (S.tab === 'chat') render();
+}
+
+// ---------------- actions ----------------
+async function onMainClick(e) {
+  const b = e.target.closest('[data-act]'); if (!b) return;
+  const id = b.dataset.id ? Number(b.dataset.id) : null;
+  switch (b.dataset.act) {
+    case 'goto': go(b.dataset.tab); break;
+    case 'vmode': S.voteMode = b.dataset.mode; render(); break;
+    case 'next': pickRandomIdea(); render(); break;
+    case 'vote-pending': S.voteMode = 'random'; S.currentIdeaId = null; pickRandomIdea(true); go('vote'); break;
+    case 'vote': await castVote(S.currentIdeaId, Number(b.dataset.v), true); break;
+    case 'vote-id': await castVote(id, Number(b.dataset.v), false); break;
+    case 'to-chat': await sendMessage({ body: 'מה דעתך על זה? 💭', idea_id: id }); go('chat'); break;
+    case 'schedule': openSchedule({ idea: ideaById(id) }); break;
+    case 'schedule-free': openSchedule({}); break;
+    case 'edit-date': openSchedule({ date: S.dates.find((d) => d.id === id) }); break;
+    case 'done-date': await sb.from('dates').update({ status: 'done' }).eq('id', id); toast('איזה כיף! ✓'); break;
+    case 'add-idea': openAddIdea(); break;
+  }
+}
+
+async function castVote(ideaId, value, advance) {
+  if (!ideaId) return;
+  const row = { idea_id: ideaId, profile: S.me, value, updated_at: new Date().toISOString() };
+  S.votes = S.votes.filter((v) => !(v.idea_id === ideaId && v.profile === S.me)).concat(row);
+  const { error } = await sb.from('votes').upsert(row);
+  if (error) return toast('ההצבעה לא נשמרה');
+  if (value === 1 && isMatch(ideaId)) {
+    toast('💞 יש התאמה! אפשר לקבוע דייט');
+    openSchedule({ idea: ideaById(ideaId) });
+  } else if (advance) {
+    pickRandomIdea();
+  }
+  render();
+}
+
+// ---------------- sheets ----------------
+function openSheet(html, onMount) {
+  const root = $('#sheet-root');
+  root.innerHTML = `<div class="sheet-backdrop"><div class="sheet"><div class="grab"></div>${html}</div></div>`;
+  const bd = root.firstElementChild;
+  bd.addEventListener('click', (e) => { if (e.target === bd || e.target.closest('[data-close]')) closeSheet(); });
+  onMount?.(bd.querySelector('.sheet'));
+}
+function closeSheet() { $('#sheet-root').innerHTML = ''; }
+
+function openSchedule({ idea = null, date = null }) {
+  const d = date || {};
+  const title = d.title || idea?.title || '';
+  openSheet(`
+    <h2>${date ? 'עריכת דייט' : '📅 קביעת דייט'}</h2>
+    <form id="sched">
+      <label class="field"><span>מה עושים</span><input name="title" required value="${esc(title)}" placeholder="למשל: מסעדת שף"></label>
+      <div class="row2">
+        <label class="field"><span>תאריך</span><input name="date_on" type="date" required value="${esc(d.date_on || '')}" min="${date ? '' : todayStr()}"></label>
+        <label class="field"><span>שעה</span><input name="time_at" type="time" value="${esc(fmtTime(d.time_at))}"></label>
+      </div>
+      <label class="field"><span>איפה (לא חובה)</span><input name="place" value="${esc(d.place || '')}" placeholder="שם המקום או העיר"></label>
+      <label class="field"><span>הערות ומשימות</span><textarea name="notes" placeholder="למשל: לארגן בייביסיטר, להזמין מקום">${esc(d.notes || '')}</textarea></label>
+      <div class="btns">
+        <button class="btn rose" type="submit">${date ? 'שמירה' : 'קובעים! ♥'}</button>
+        ${date && d.status === 'planned' ? '<button class="btn ghost" type="button" data-cancel>ביטול הדייט</button>' : ''}
+        <button class="btn ghost" type="button" data-close>סגירה</button>
+      </div>
+    </form>`, (sheet) => {
+    sheet.querySelector('[data-cancel]')?.addEventListener('click', async () => {
+      await sb.from('dates').update({ status: 'cancelled' }).eq('id', d.id);
+      closeSheet(); toast('הדייט בוטל');
+    });
+    sheet.querySelector('#sched').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = Object.fromEntries(new FormData(e.target));
+      const row = {
+        title: fd.title.trim(), date_on: fd.date_on, time_at: fd.time_at || null,
+        place: fd.place.trim() || null, notes: fd.notes.trim() || null,
+      };
+      const btn = e.target.querySelector('[type=submit]'); btn.disabled = true;
+      let res;
+      if (date) res = await sb.from('dates').update(row).eq('id', d.id);
+      else res = await sb.from('dates').insert({ ...row, idea_id: idea?.id ?? null, created_by: S.me });
+      if (res.error) { btn.disabled = false; return toast('לא נשמר, נסו שוב'); }
+      if (!date) {
+        const when = `${fmtDate(row.date_on)}${row.time_at ? ' ב-' + row.time_at : ''}`;
+        await sendMessage({ body: `📅 קבעתי לנו: ${row.title}, ${when}${row.notes ? '\n📝 ' + row.notes : ''}` });
+      }
+      closeSheet(); toast(date ? 'נשמר' : 'הדייט נקבע ♥');
+      const { data } = await sb.from('dates').select('*').order('date_on').order('time_at', { nullsFirst: false });
+      S.dates = data || []; render();
+    });
+  });
+}
+
+function openAddIdea() {
+  openSheet(`
+    <h2>רעיון חדש</h2>
+    <form id="addidea">
+      <label class="field"><span>שם הרעיון</span><input name="title" required placeholder="למשל: מסעדה איטלקית ביפו"></label>
+      <label class="field"><span>כמה מילים (לא חובה)</span><input name="description"></label>
+      <div class="row2">
+        <label class="field"><span>קטגוריה</span><select name="category">${Object.entries(CAT).map(([k, v]) => `<option value="${k}">${v.em} ${v.label}</option>`).join('')}</select></label>
+        <label class="field"><span>משך</span><select name="duration">${Object.entries(DUR).map(([k, v]) => `<option value="${k}" ${k === 'evening' ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+      </div>
+      <label class="field"><span>עלות משוערת (₪)</span><input name="cost" type="number" inputmode="numeric" min="0" step="10" value="300"></label>
+      <div class="btns"><button class="btn rose" type="submit">הוספה</button><button class="btn ghost" type="button" data-close>סגירה</button></div>
+    </form>`, (sheet) => {
+    sheet.querySelector('#addidea').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = Object.fromEntries(new FormData(e.target));
+      const { data, error } = await sb.from('ideas').insert({
+        title: fd.title.trim(), description: fd.description.trim() || null, category: fd.category,
+        duration: fd.duration, cost: Number(fd.cost) || 0, created_by: S.me,
+      }).select().single();
+      if (error) return toast('לא נשמר');
+      S.ideas.push(data);
+      await castVote(data.id, 1, false);
+      closeSheet(); toast('הרעיון נוסף, וסימנת שאהבת ♥');
+    });
+  });
+}
+
+function openSettings() {
+  openSheet(`
+    <h2>הגדרות</h2>
+    <p class="muted" style="margin-top:-6px">מחובר/ת כ${esc(nameOf(S.me))}</p>
+    <div class="btns">
+      <button class="btn ghost" data-switch>החלפה ל${esc(nameOf(partner()))}</button>
+      <button class="btn ghost" data-logout>יציאה מהאפליקציה</button>
+      <button class="btn" data-close>סגירה</button>
+    </div>`, (sheet) => {
+    sheet.querySelector('[data-switch]').addEventListener('click', () => {
+      S.me = partner(); lsSet('dates-profile', S.me); closeSheet(); computeUnread(); render();
+    });
+    sheet.querySelector('[data-logout]').addEventListener('click', async () => {
+      await sb.auth.signOut(); lsDel('dates-profile'); S.me = null; closeSheet(); renderLogin();
+    });
+  });
+}
