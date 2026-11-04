@@ -31,6 +31,9 @@ create table if not exists public.messages (
   profile    text not null check (profile in ('tal','eilat')),
   body       text,
   idea_id    bigint references public.ideas(id) on delete set null,
+  media_path text,
+  media_kind text check (media_kind in ('image','video','audio')),
+  reactions  jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now()
 );
 

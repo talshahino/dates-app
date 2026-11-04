@@ -38,6 +38,7 @@ const ICON = {
   home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v9.5h13V10"/><path d="M10 19.5v-5h4v5"/></svg>',
   vote: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 20.5s-7.5-4.6-7.5-10.2A4.3 4.3 0 0 1 12 7.6a4.3 4.3 0 0 1 7.5 2.7c0 5.6-7.5 10.2-7.5 10.2Z"/></svg>',
   dates: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="3.5" y="5" width="17" height="15.5" rx="4"/><path d="M8 3v4M16 3v4M3.5 10h17"/><circle cx="12" cy="15" r="1.6" fill="currentColor"/></svg>',
+  mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg>',
   album: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><rect x="3" y="5" width="18" height="15" rx="4"/><circle cx="12" cy="12.5" r="3.6"/><path d="M8 5l1.4-2h5.2L16 5"/></svg>',
   chat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><path d="M4 6.5A3.5 3.5 0 0 1 7.5 3h9A3.5 3.5 0 0 1 20 6.5v6a3.5 3.5 0 0 1-3.5 3.5H10l-4.5 4v-4.2A3.5 3.5 0 0 1 4 12.5z"/></svg>',
   plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
@@ -184,7 +185,9 @@ function subscribe() {
     .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, (p) => {
       if (p.eventType === 'INSERT') {
         if (!S.messages.some((m) => m.id === p.new.id)) S.messages.push(p.new);
-        if (p.new.profile !== S.me && S.tab !== 'chat') toast(`💬 ${nameOf(p.new.profile)}: ${p.new.body || 'שלח/ה רעיון'}`);
+        if (p.new.profile !== S.me && S.tab !== 'chat') toast(`💬 ${nameOf(p.new.profile)}: ${msgPreview(p.new)}`);
+      } else if (p.eventType === 'UPDATE') {
+        const i = S.messages.findIndex((m) => m.id === p.new.id); if (i >= 0) S.messages[i] = p.new;
       } else if (p.eventType === 'DELETE') {
         S.messages = S.messages.filter((m) => m.id !== p.old.id);
       }
@@ -276,12 +279,14 @@ function render(soft = false) {
     $('#main').innerHTML = viewVote(); bindSwipe(); return;
   }
   if (soft && document.activeElement?.matches?.('.note-input')) return; // don't wipe a note being typed
-  if (soft && S.busy) return; // a movie is being made
+  if (soft && (S.busy || S.rec)) return; // a movie is being made / voice recording in progress
   const views = { home: viewHome, vote: viewVote, dates: viewDates, album: viewAlbum, chat: viewChat };
   const wasAtBottom = S.tab === 'chat' && (window.innerHeight + window.scrollY >= document.body.scrollHeight - 80);
   $('#main').innerHTML = views[S.tab]();
-  $('#composer-slot').innerHTML = S.tab === 'chat' ? composerHtml() : '';
-  if (S.tab === 'chat') bindComposer();
+  if (S.tab !== 'chat') $('#composer-slot').innerHTML = '';
+  else if (!$('#composer')) { $('#composer-slot').innerHTML = composerHtml(); bindComposer(); }
+  else $('.quick').innerHTML = quickReplies().map((q) => `<button type="button" data-q="${esc(q)}">${esc(q)}</button>`).join('');
+  if (S.tab === 'chat') bindReactions();
   if (S.tab === 'vote' && S.voteMode === 'random') bindSwipe();
   hydrateMedia();
   const key = S.tab + S.messages.length;
@@ -493,6 +498,9 @@ function viewDates() {
   return html;
 }
 
+const REACTS = ['❤️', '😍', '😂', '👍', '🥺', '🔥'];
+const msgPreview = (m) => m.body || ({ image: '📷 תמונה', video: '🎥 סרטון', audio: '🎤 הודעה קולית' }[m.media_kind] || 'שלח/ה רעיון');
+
 function viewChat() {
   if (!S.messages.length) {
     return `<div class="empty"><span class="ic">💬</span>כאן מדברים על הדייט הבא.<br>אפשר גם לשלוח רעיון מההצבעה.</div><div class="chat"></div>`;
@@ -504,40 +512,169 @@ function viewChat() {
     if (day !== lastDay) { html += `<div class="day-sep">${fmtDate(day)}</div>`; lastDay = day; }
     const idea = m.idea_id ? ideaById(m.idea_id) : null;
     const time = new Date(m.created_at).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
-    html += `<div class="msg ${m.profile === S.me ? 'me' : 'them'}"><span class="body">${esc(m.body || '')}</span>${idea ? `
+    const media = !m.media_path ? '' : m.media_kind === 'image'
+      ? `<button class="msg-media" data-act="chat-img" data-path="${esc(m.media_path)}"><img data-path="${esc(m.media_path)}" alt=""></button>`
+      : m.media_kind === 'video'
+        ? `<div class="msg-media"><video data-path="${esc(m.media_path)}" controls playsinline preload="metadata"></video></div>`
+        : `<div class="msg-audio"><audio data-path="${esc(m.media_path)}" controls preload="metadata"></audio></div>`;
+    const rx = Object.entries(m.reactions || {}).filter(([, e]) => e);
+    html += `<div class="msg ${m.profile === S.me ? 'me' : 'them'} ${m.media_path && !m.body ? 'has-media' : ''}" data-mid="${m.id}">${media}${m.body ? `<span class="body">${esc(m.body)}</span>` : ''}${idea ? `
       <div class="attached cat-${idea.category}"><div class="strip">${sceneHtml(idea)}</div><div class="in">
         <b>${esc(idea.title)}</b><span class="small muted">${DUR[idea.duration] ?? ''}, כ-${idea.cost} ₪</span>
         <div><button data-act="schedule" data-id="${idea.id}">📅 קבעו דייט</button>${voteOf(idea.id, S.me) !== 1 ? `<button data-act="vote-id" data-id="${idea.id}" data-v="1">♥ אהבתי</button>` : ''}</div>
-      </div></div>` : ''}<span class="meta">${time}</span></div>`;
+      </div></div>` : ''}<span class="meta">${time}</span>${rx.length ? `<span class="rx">${rx.map(([p, e]) => `<span title="${nameOf(p)}">${e}</span>`).join('')}</span>` : ''}</div>`;
   }
   return html + '</div>';
 }
 
-function composerHtml() {
-  return `<form class="composer" id="composer">
-    <button type="button" class="attach" data-act-c="attach" aria-label="שליחת רעיון">🎲</button>
-    <textarea id="msg" rows="1" placeholder="מה בא לך השבוע?"></textarea>
-    <button class="send" type="submit" aria-label="שליחה">${ICON.send}</button>
-  </form>`;
+// quick replies that fit what the partner last sent
+function quickReplies() {
+  const toHer = partner() === 'eilat';
+  const g = (m, f) => (toHer ? f : m);
+  const lastTheirs = [...S.messages].reverse().find((m) => m.profile !== S.me);
+  const lastAny = S.messages.at(-1);
+  if (lastTheirs && lastAny === lastTheirs) {
+    if (lastTheirs.idea_id) return ['אהבתי! 😍', g('בוא נקבע 📅', 'בואי נקבע 📅'), 'אולי משהו אחר?', 'מתי?'];
+    if ((lastTheirs.body || '').startsWith('📅')) return ['מושלם, נתראה שם ❤️', 'אני אסדר בייביסיטר', 'אפשר שעה אחרת?', 'כבר מחכה 🥰'];
+    if (lastTheirs.media_path || (lastTheirs.body || '').startsWith('📷')) return ['איזה יפה 😍', 'איזה ערב היה ❤️', 'עוד! 📸'];
+    if ((lastTheirs.body || '').startsWith('🎬')) return ['בוכה 🥺❤️', 'הכי יפה שיש', 'עוד אחד כזה!'];
+    if ((lastTheirs.body || '').includes('?')) return ['כן! 😍', 'לא בטוח/ה', 'בוא/י נדבר', 'תני לי לחשוב'].map((x) => x.replace('בוא/י', g('בוא', 'בואי')).replace('תני', g('תן', 'תני')).replace('בטוח/ה', S.me === 'eilat' ? 'בטוחה' : 'בטוח'));
+  }
+  return [g('אוהבת אותך ❤️', 'אוהב אותך ❤️'), g('מתגעגעת 🥰', 'מתגעגע 🥰'), 'מה בא לך השבוע?', g('יש לי רעיון 💡', 'יש לי רעיון 💡')];
 }
+
+function composerHtml() {
+  return `<div class="composer-wrap">
+    <div class="quick">${quickReplies().map((q) => `<button type="button" data-q="${esc(q)}">${esc(q)}</button>`).join('')}</div>
+    <form class="composer" id="composer">
+      <button type="button" class="attach" data-act-c="attach" aria-label="שליחת רעיון">🎲</button>
+      <button type="button" class="attach photo" data-act-c="photo" aria-label="שליחת תמונה">📷</button>
+      <div class="rec-bar" hidden><span class="dot"></span><span class="rec-time">0:00</span><button type="button" class="rec-cancel">ביטול</button></div>
+      <textarea id="msg" rows="1" placeholder="מה בא לך השבוע?"></textarea>
+      <button class="send mic" type="submit" aria-label="הודעה קולית">${ICON.mic}</button>
+    </form>
+  </div>`;
+}
+
 function bindComposer() {
-  const f = $('#composer'); const ta = $('#msg');
-  ta.addEventListener('input', () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 120) + 'px'; });
+  const f = $('#composer'); const ta = $('#msg'); const btn = f.querySelector('.send');
+  const recBar = f.querySelector('.rec-bar');
+  const setBtn = () => {
+    const hasText = ta.value.trim().length > 0;
+    btn.classList.toggle('mic', !hasText && !S.rec);
+    btn.innerHTML = hasText || S.rec ? ICON.send : ICON.mic;
+    btn.setAttribute('aria-label', hasText ? 'שליחה' : S.rec ? 'שליחת ההקלטה' : 'הודעה קולית');
+  };
+  ta.addEventListener('input', () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 120) + 'px'; setBtn(); });
   f.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const body = ta.value.trim(); if (!body) return;
-    ta.value = ''; ta.style.height = '';
+    if (S.rec) return stopRecording(true);
+    const body = ta.value.trim();
+    if (!body) return startRecording(f, recBar, setBtn);
+    ta.value = ''; ta.style.height = ''; setBtn();
     await sendMessage({ body });
   });
+  f.querySelector('.rec-cancel').addEventListener('click', () => stopRecording(false));
   f.querySelector('[data-act-c="attach"]').addEventListener('click', () => {
     const pool = S.ideas.filter((i) => voteOf(i.id, S.me) !== -1);
     const idea = pool[Math.floor(Math.random() * pool.length)];
     if (idea) sendMessage({ body: 'מה דעתך על זה? 🎲', idea_id: idea.id });
   });
+  f.querySelector('[data-act-c="photo"]').addEventListener('click', () => {
+    const input = document.createElement('input');
+    input.type = 'file'; input.accept = 'image/*,video/*'; input.style.display = 'none';
+    document.body.appendChild(input);
+    input.addEventListener('change', async () => { const file = input.files[0]; input.remove(); if (file) await sendMedia(file); });
+    input.click();
+  });
+  $('.quick').addEventListener('click', (e) => {
+    const q = e.target.closest('[data-q]'); if (q) sendMessage({ body: q.dataset.q });
+  });
+  setBtn();
 }
 
-async function sendMessage({ body, idea_id = null }) {
-  const { data, error } = await sb.from('messages').insert({ profile: S.me, body, idea_id }).select().single();
+async function sendMedia(file) {
+  const kind = file.type.startsWith('video') ? 'video' : file.type.startsWith('audio') ? 'audio' : 'image';
+  if (kind === 'video' && file.size > 50 * 1024 * 1024) return toast('הסרטון גדול מדי. צלמו קטע קצר');
+  toast('שולח…');
+  const body = kind === 'image' ? await resizeImage(file) : file;
+  const ext = kind === 'image' ? 'jpg' : (file.name?.split('.').pop() || (kind === 'audio' ? 'm4a' : 'mp4')).toLowerCase();
+  const path = `chat/${Date.now()}-${Math.random().toString(36).slice(2, 7)}.${ext}`;
+  const up = await sb.storage.from(BUCKET).upload(path, body, { contentType: kind === 'image' ? 'image/jpeg' : file.type });
+  if (up.error) return toast('השליחה נכשלה');
+  await sendMessage({ body: null, media_path: path, media_kind: kind });
+}
+
+// ---------- voice messages ----------
+async function startRecording(f, recBar, setBtn) {
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+  catch { return toast('צריך לאשר גישה למיקרופון'); }
+  const mime = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm'].find((m) => MediaRecorder.isTypeSupported(m)) || '';
+  const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+  const chunks = [];
+  rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+  const t0 = Date.now();
+  S.rec = { rec, stream, chunks, mime: (mime || 'audio/webm').split(';')[0], keep: true, recBar, setBtn,
+    timer: setInterval(() => {
+      const s = Math.floor((Date.now() - t0) / 1000);
+      recBar.querySelector('.rec-time').textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+      if (s >= 120) stopRecording(true);
+    }, 300) };
+  rec.onstop = async () => {
+    const r = S.rec; S.rec = null;
+    clearInterval(r.timer); r.stream.getTracks().forEach((t) => t.stop());
+    r.recBar.hidden = true; $('#msg') && ($('#msg').hidden = false); r.setBtn();
+    if (!r.keep || !r.chunks.length) return;
+    const ext = r.mime.includes('mp4') ? 'm4a' : 'webm';
+    await sendMedia(new File(r.chunks, `voice.${ext}`, { type: r.mime }));
+  };
+  rec.start();
+  recBar.hidden = false; $('#msg').hidden = true; setBtn();
+}
+function stopRecording(keep) {
+  if (!S.rec) return;
+  S.rec.keep = keep;
+  S.rec.rec.stop();
+}
+
+// ---------- reactions: long-press or double-tap a message ----------
+function bindReactions() {
+  const chat = $('.chat'); if (!chat || chat.dataset.bound) return;
+  chat.dataset.bound = '1';
+  let timer = null;
+  chat.addEventListener('pointerdown', (e) => {
+    const el = e.target.closest('.msg'); if (!el || e.target.closest('button, video, audio')) return;
+    timer = setTimeout(() => openReactions(Number(el.dataset.mid)), 450);
+  });
+  ['pointerup', 'pointercancel', 'pointermove'].forEach((ev) => chat.addEventListener(ev, (e) => {
+    if (ev === 'pointermove' && Math.abs(e.movementX) + Math.abs(e.movementY) < 4) return;
+    clearTimeout(timer);
+  }));
+  chat.addEventListener('dblclick', (e) => {
+    const el = e.target.closest('.msg'); if (el) react(Number(el.dataset.mid), '❤️');
+  });
+  chat.addEventListener('contextmenu', (e) => { if (e.target.closest('.msg')) e.preventDefault(); });
+}
+function openReactions(id) {
+  navigator.vibrate?.(15);
+  openSheet(`<h2>תגובה</h2><div class="react-row">${REACTS.map((r) => `<button data-r="${r}">${r}</button>`).join('')}</div>
+    <div class="btns"><button class="btn ghost" data-close>סגירה</button></div>`, (sheet) => {
+    sheet.querySelectorAll('[data-r]').forEach((b) => b.addEventListener('click', () => { closeSheet(); react(id, b.dataset.r); }));
+  });
+}
+async function react(id, emoji) {
+  const m = S.messages.find((x) => x.id === id); if (!m) return;
+  const rx = { ...(m.reactions || {}) };
+  rx[S.me] = rx[S.me] === emoji ? null : emoji; // same emoji again removes it
+  if (!rx[S.me]) delete rx[S.me];
+  m.reactions = rx; render();
+  const { error } = await sb.from('messages').update({ reactions: rx }).eq('id', id);
+  if (error) toast('התגובה לא נשמרה');
+}
+
+async function sendMessage({ body, idea_id = null, media_path = null, media_kind = null }) {
+  const { data, error } = await sb.from('messages').insert({ profile: S.me, body, idea_id, media_path, media_kind }).select().single();
   if (error) return toast('ההודעה לא נשלחה, נסו שוב');
   if (!S.messages.some((m) => m.id === data.id)) S.messages.push(data);
   computeUnread(); if (S.tab === 'chat') render();
@@ -565,6 +702,7 @@ async function onMainClick(e) {
     case 'camera': pickMedia({ dateId: S.albumDate, camera: true }); break;
     case 'gallery': pickMedia({ dateId: S.albumDate, camera: false }); break;
     case 'view-mem': openViewer(id); break;
+    case 'chat-img': openSheet(`<div class="viewer"><img data-path="${esc(b.dataset.path)}" alt=""></div><div class="btns"><button class="btn" data-close>סגירה</button></div>`, () => hydrateMedia()); break;
     case 'freq': await setFreq(b.dataset.f); break;
     case 'make-movie': await startMovie(b.dataset.period); break;
     case 'share-movie': await shareMovie(id); break;
