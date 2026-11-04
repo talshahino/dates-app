@@ -27,6 +27,14 @@ const CAT = {
   experiences: { label: 'חוויות',       em: '🎭' },
   people:      { label: 'עם חברים',     em: '🥂' },
 };
+const ICON = {
+  home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v9.5h13V10"/><path d="M10 19.5v-5h4v5"/></svg>',
+  vote: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 20.5s-7.5-4.6-7.5-10.2A4.3 4.3 0 0 1 12 7.6a4.3 4.3 0 0 1 7.5 2.7c0 5.6-7.5 10.2-7.5 10.2Z"/></svg>',
+  dates: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="3.5" y="5" width="17" height="15.5" rx="4"/><path d="M8 3v4M16 3v4M3.5 10h17"/><circle cx="12" cy="15" r="1.6" fill="currentColor"/></svg>',
+  chat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><path d="M4 6.5A3.5 3.5 0 0 1 7.5 3h9A3.5 3.5 0 0 1 20 6.5v6a3.5 3.5 0 0 1-3.5 3.5H10l-4.5 4v-4.2A3.5 3.5 0 0 1 4 12.5z"/></svg>',
+  send: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>',
+};
+const COUPLE = 'icons/couple.svg';
 const DUR = {
   short: 'עד שעתיים', evening: 'ערב', halfday: 'חצי יום', fullday: 'יום שלם', overnight: 'לילה',
 };
@@ -76,12 +84,12 @@ async function boot() {
 function renderLogin(errText = '') {
   $('#app').innerHTML = `
     <div class="center-screen"><div class="hero">
-      <div class="logo">♥</div>
+      <div class="couple"><img src="${COUPLE}" alt=""></div>
       <h1>הדייטים שלנו</h1>
       <p>מקום קטן רק לשניכם, לתכנן את הפינוק הבא.</p>
       <form id="login-form">
         <label class="field"><span>הקוד הזוגי</span>
-          <input id="code" type="password" autocomplete="current-password" placeholder="הקוד שבחרתם" required>
+          <input id="code" type="password" autocomplete="current-password" placeholder="הקוד ששניכם בחרתם" required>
         </label>
         <button class="btn" type="submit">כניסה</button>
         <div class="err">${esc(errText)}</div>
@@ -99,12 +107,11 @@ function renderLogin(errText = '') {
 function renderPicker() {
   $('#app').innerHTML = `
     <div class="center-screen"><div class="hero">
-      <div class="logo">♥</div>
-      <h1>מי את/ה?</h1>
+      <h1>מי מחזיק את הטלפון?</h1>
       <p>בוחרים פעם אחת במכשיר הזה.</p>
       <div class="pick">
-        <button data-pick="tal">אני טל<small>הצבעות והודעות יופיעו בשמך</small></button>
-        <button data-pick="eilat">אני אילת<small>הצבעות והודעות יופיעו בשמך</small></button>
+        <button data-pick="tal"><span class="face"><img src="icons/tal.svg" alt=""></span>אני טל</button>
+        <button data-pick="eilat"><span class="face"><img src="icons/eilat.svg" alt=""></span>אני אילת</button>
       </div>
     </div></div>`;
   $('#app').querySelectorAll('[data-pick]').forEach((b) =>
@@ -179,8 +186,8 @@ function renderShell() {
     <main id="main"></main>
     <div id="composer-slot"></div>
     <nav class="tabbar" id="tabbar">
-      ${[['home', '🏠', 'בית'], ['vote', '💞', 'הצבעה'], ['dates', '📅', 'הדייטים'], ['chat', '💬', 'צ׳אט']]
-        .map(([k, ic, l]) => `<button data-tab="${k}"><span class="ic">${ic}</span>${l}</button>`).join('')}
+      ${[['home', 'בית'], ['vote', 'הצבעה'], ['dates', 'דייטים'], ['chat', 'צ׳אט']]
+        .map(([k, l]) => `<button data-tab="${k}">${ICON[k]}${l}</button>`).join('')}
     </nav>`;
   $('#tabbar').addEventListener('click', (e) => {
     const b = e.target.closest('[data-tab]'); if (!b) return;
@@ -197,9 +204,9 @@ function go(tab) {
 
 let lastRenderKey = '';
 function render(soft = false) {
-  const titles = { home: 'הדייטים שלנו', vote: 'הצבעה משותפת', dates: 'הדייטים שלנו', chat: `צ׳אט עם ${nameOf(partner())}` };
+  const titles = { home: 'הדייטים שלנו', vote: 'מה עושים השבוע?', dates: 'היומן שלנו', chat: `צ׳אט עם ${nameOf(partner())}` };
   $('#title').textContent = titles[S.tab];
-  $('#who').textContent = `${nameOf(S.me)} · החלפה`;
+  $('#who').innerHTML = `<span class="dot ${S.me}">${nameOf(S.me)[0]}</span>${nameOf(S.me)}`;
   $('#tabbar').querySelectorAll('[data-tab]').forEach((b) => {
     b.classList.toggle('on', b.dataset.tab === S.tab);
     b.querySelector('.badge')?.remove();
@@ -229,37 +236,45 @@ function viewHome() {
   const matches = S.ideas.filter((i) => isMatch(i.id));
   const pendingForMe = S.ideas.filter((i) => voteOf(i.id, partner()) === 1 && voteOf(i.id, S.me) === 0);
   const hour = new Date().getHours();
-  const hello = hour < 12 ? 'בוקר טוב' : hour < 18 ? 'צהריים טובים' : 'ערב טוב';
+  const hello = hour < 5 ? 'לילה טוב' : hour < 12 ? 'בוקר טוב' : hour < 18 ? 'צהריים טובים' : 'ערב טוב';
+  const next = up.find((d) => d.date_on !== todayStr());
+  const sub = today.length ? 'יש לכם דייט היום!' : next ? `הדייט הבא: ${fmtDate(next.date_on)}` : 'מה עושים השבוע?';
 
-  let html = `<div class="greet"><p class="muted small" style="margin:0">${hello},</p><h2>${esc(nameOf(S.me))} ♥</h2></div>`;
+  let html = `<section class="home-hero">
+    <div class="txt"><div class="hello">${hello},</div><h2>${esc(nameOf(S.me))}</h2><p>${esc(sub)}</p></div>
+    <img src="${COUPLE}" alt="טל ואילת">
+  </section>`;
 
   for (const d of today) {
-    html += `<div class="card reminder">
-      <div class="kicker">⏰ תזכורת · היום${d.time_at ? ' ב-' + fmtTime(d.time_at) : ''}</div>
+    html += `<div class="reminder">
+      <div class="kicker">⏰ היום${d.time_at ? ' ב-' + fmtTime(d.time_at) : ''}</div>
       <h2>${esc(d.title)}</h2>
       ${d.place ? `<div>📍 ${esc(d.place)}</div>` : ''}
       ${d.notes ? `<div class="note">📝 ${esc(d.notes)}</div>` : ''}
     </div>`;
   }
 
-  const next = up.find((d) => d.date_on !== todayStr());
-  if (next) {
-    html += `<h3 class="section-title">הדייט הבא</h3>${dateCard(next)}`;
-  } else if (!today.length) {
-    html += `<div class="card"><h3 style="font-size:22px">עוד לא קבעתם דייט השבוע</h3>
-      <p class="muted" style="margin:6px 0 14px">בואו נמצא רעיון ששניכם אוהבים.</p>
-      <button class="btn rose" data-act="goto" data-tab="vote">🎲 להצבעה</button></div>`;
+  if (!today.length && !next) {
+    html += `<div class="card"><h3 style="font-size:21px">עוד לא קבעתם דייט השבוע</h3>
+      <p class="muted" style="margin:6px 0 14px">מגרילים רעיון, כל אחד מצביע, וכשיש התאמה קובעים.</p>
+      <button class="btn" data-act="goto" data-tab="vote">🎲 להגריל רעיון</button></div>`;
   }
 
-  html += `<div class="quick" style="margin-top:6px">
-    <button data-act="goto" data-tab="vote"><span class="ic">💞</span><b>${matches.length} התאמות</b><span class="muted small">רעיונות ששניכם אהבתם</span></button>
-    <button data-act="goto" data-tab="chat"><span class="ic">💬</span><b>${S.unread ? S.unread + ' הודעות חדשות' : 'צ׳אט'}</b><span class="muted small">לדבר על הדייט הבא</span></button>
+  html += `<div class="tiles">
+    <button class="tile mint" data-act="goto" data-tab="vote" data-mode="matches">
+      <span class="big">${matches.length}</span><div><b>התאמות</b><br><span>רעיונות ששניכם אהבתם</span></div>
+    </button>
+    <button class="tile sky" data-act="goto" data-tab="chat">
+      <span class="big">${S.unread || '💬'}</span><div><b>${S.unread ? 'הודעות חדשות' : 'צ׳אט'}</b><br><span>לדבר על הדייט הבא</span></div>
+    </button>
   </div>`;
 
+  if (next) html += `<h3 class="section-title">הדייט הבא</h3>${dateCard(next)}`;
+
   if (pendingForMe.length) {
-    html += `<div class="card" style="margin-top:14px"><b>${esc(nameOf(partner()))} אהב/ה ${pendingForMe.length} רעיונות שעוד לא הצבעת עליהם</b>
-      <p class="muted small" style="margin:4px 0 12px">אולי יש פה התאמה שמחכה.</p>
-      <button class="btn small ghost" data-act="vote-pending">לראות</button></div>`;
+    html += `<div class="card" style="margin-top:14px"><b>${esc(nameOf(partner()))} אהב/ה ${pendingForMe.length === 1 ? 'רעיון שעוד לא הצבעת עליו' : pendingForMe.length + ' רעיונות שעוד לא הצבעת עליהם'}</b>
+      <p class="muted small" style="margin:4px 0 12px">אולי מחכה לכם פה התאמה.</p>
+      <button class="btn small violet" data-act="vote-pending">להצביע</button></div>`;
   }
   return html;
 }
@@ -306,18 +321,17 @@ function viewVote() {
   else if (theirs === 1) note = `${esc(pn)} אהב/ה את זה 💕`;
   else if (theirs === -1) note = `${esc(pn)} פחות התלהב/ה מזה`;
 
-  html += `<div class="idea-card">
-    <div class="idea-art">${CAT[idea.category]?.em ?? '✨'}</div>
+  html += `<div class="idea-card cat-${idea.category} ${S.popIdea ? 'pop' : ''}">
+    <div class="idea-art">${CAT[idea.category]?.em ?? '✨'}<span class="price">כ-${idea.cost} ₪</span></div>
     <div class="idea-body">
       <h2>${esc(idea.title)}</h2>
       ${idea.description ? `<p class="muted" style="margin:0">${esc(idea.description)}</p>` : ''}
       <div class="chips">
-        <span class="chip">${CAT[idea.category]?.label ?? ''}</span>
+        <span class="chip cat">${CAT[idea.category]?.label ?? ''}</span>
         <span class="chip">${DUR[idea.duration] ?? ''}</span>
-        <span class="chip">כ-${idea.cost} ₪</span>
-        ${mine === 1 ? '<span class="chip rose">אהבת ♥</span>' : mine === -1 ? '<span class="chip">סימנת לא</span>' : ''}
+        ${mine === 1 ? '<span class="chip love">אהבת ♥</span>' : mine === -1 ? '<span class="chip">סימנת לא</span>' : ''}
       </div>
-      ${note ? `<div class="partner-note">${note}</div>` : ''}
+      ${note ? `<div class="partner-note ${isMatch(idea.id) ? 'match' : ''}">${note}</div>` : ''}
     </div>
   </div>
   <div class="vote-actions">
@@ -327,19 +341,19 @@ function viewVote() {
   </div>
   <div class="idea-tools">
     <button class="btn ghost small" data-act="to-chat" data-id="${idea.id}">💬 לדבר על זה</button>
-    <button class="btn small" data-act="schedule" data-id="${idea.id}">📅 קבעו דייט</button>
+    <button class="btn small violet" data-act="schedule" data-id="${idea.id}">📅 קבעו דייט</button>
   </div>
   <div class="foot"><button class="linkish" data-act="add-idea">+ להוסיף רעיון משלנו</button></div>`;
   return html;
 }
 
 function ideaRow(i, matched) {
-  return `<div class="list-item">
+  return `<div class="list-item cat-${i.category}">
     <div class="em">${CAT[i.category]?.em ?? '✨'}</div>
-    <div class="txt"><b>${esc(i.title)}</b><span class="muted small">${DUR[i.duration] ?? ''} · כ-${i.cost} ₪</span></div>
+    <div class="txt"><b>${esc(i.title)}</b><span class="muted small">${DUR[i.duration] ?? ''}, כ-${i.cost} ₪</span></div>
     <div class="acts">
-      ${matched ? `<button class="btn small" data-act="schedule" data-id="${i.id}">📅 קבעו</button>`
-                : `<button class="btn small rose" data-act="vote-id" data-id="${i.id}" data-v="1">♥ גם אני</button>`}
+      ${matched ? `<button class="btn small violet" data-act="schedule" data-id="${i.id}">📅 קבעו</button>`
+                : `<button class="btn small" data-act="vote-id" data-id="${i.id}" data-v="1">♥ גם אני</button>`}
       <button class="btn small ghost" data-act="to-chat" data-id="${i.id}">💬</button>
     </div>
   </div>`;
@@ -347,15 +361,20 @@ function ideaRow(i, matched) {
 
 function dateCard(d) {
   const past = d.status !== 'planned' || d.date_on < todayStr();
-  return `<div class="card date-card ${past ? 'past' : ''}">
-    <div class="when">${fmtDate(d.date_on)}${d.time_at ? ' · ' + fmtTime(d.time_at) : ''}</div>
-    <h3>${esc(d.title)}</h3>
-    ${d.place ? `<div class="muted small">📍 ${esc(d.place)}</div>` : ''}
-    ${d.notes ? `<div class="note">📝 ${esc(d.notes)}</div>` : ''}
-    <div class="muted small" style="margin-top:6px">נקבע ע״י ${esc(nameOf(d.created_by))}${d.status === 'done' ? ' · ✓ היה' : d.status === 'cancelled' ? ' · בוטל' : ''}</div>
-    <div class="acts">
-      <button class="btn small ghost" data-act="edit-date" data-id="${d.id}">עריכה</button>
-      ${d.status === 'planned' ? `<button class="btn small ghost" data-act="done-date" data-id="${d.id}">✓ היה</button>` : ''}
+  const dt = new Date(d.date_on + 'T12:00:00');
+  const status = d.status === 'done' ? ', היה ✓' : d.status === 'cancelled' ? ', בוטל' : '';
+  return `<div class="date-card ${past ? 'past' : ''}">
+    <div class="cal"><div class="d">${dt.getDate()}</div><div class="m">${dt.toLocaleDateString('he-IL', { month: 'short' })}</div></div>
+    <div>
+      <div class="when">${fmtDate(d.date_on)}${d.time_at ? ', ' + fmtTime(d.time_at) : ''}</div>
+      <h3>${esc(d.title)}</h3>
+      ${d.place ? `<div class="muted small">📍 ${esc(d.place)}</div>` : ''}
+      ${d.notes ? `<div class="note">📝 ${esc(d.notes)}</div>` : ''}
+      <div class="muted small" style="margin-top:6px">${esc(nameOf(d.created_by))} קבע/ה${status}</div>
+      <div class="acts">
+        <button class="btn small ghost" data-act="edit-date" data-id="${d.id}">עריכה</button>
+        ${d.status === 'planned' ? `<button class="btn small ghost" data-act="done-date" data-id="${d.id}">✓ היה</button>` : ''}
+      </div>
     </div>
   </div>`;
 }
@@ -364,7 +383,7 @@ function viewDates() {
   const up = upcoming();
   const past = S.dates.filter((d) => !up.includes(d)).reverse();
   let html = '';
-  html += `<button class="btn rose" style="margin:6px 0 4px" data-act="schedule-free">📅 לקבוע דייט חדש</button>`;
+  html += `<button class="btn" style="margin:6px 0 4px" data-act="schedule-free">📅 לקבוע דייט חדש</button>`;
   html += `<h3 class="section-title">מתוכננים</h3>`;
   html += up.length ? up.map(dateCard).join('') : `<div class="empty"><span class="ic">🗓️</span>אין דייטים מתוכננים כרגע.</div>`;
   if (past.length) html += `<h3 class="section-title">היו</h3>` + past.slice(0, 20).map(dateCard).join('');
@@ -382,12 +401,11 @@ function viewChat() {
     if (day !== lastDay) { html += `<div class="day-sep">${fmtDate(day)}</div>`; lastDay = day; }
     const idea = m.idea_id ? ideaById(m.idea_id) : null;
     const time = new Date(m.created_at).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
-    html += `<div class="msg ${m.profile === S.me ? 'me' : 'them'}">${esc(m.body || '')}${idea ? `
-      <div class="attached"><b>${CAT[idea.category]?.em ?? ''} ${esc(idea.title)}</b>
-        <span class="small">${DUR[idea.duration] ?? ''} · כ-${idea.cost} ₪</span>
-        <div><button data-act="schedule" data-id="${idea.id}">📅 קבעו דייט</button>
-        ${voteOf(idea.id, S.me) !== 1 ? ` · <button data-act="vote-id" data-id="${idea.id}" data-v="1">♥ אהבתי</button>` : ''}</div>
-      </div>` : ''}<span class="meta">${time}</span></div>`;
+    html += `<div class="msg ${m.profile === S.me ? 'me' : 'them'}"><span class="body">${esc(m.body || '')}</span>${idea ? `
+      <div class="attached cat-${idea.category}"><div class="strip">${CAT[idea.category]?.em ?? ''}</div><div class="in">
+        <b>${esc(idea.title)}</b><span class="small muted">${DUR[idea.duration] ?? ''}, כ-${idea.cost} ₪</span>
+        <div><button data-act="schedule" data-id="${idea.id}">📅 קבעו דייט</button>${voteOf(idea.id, S.me) !== 1 ? `<button data-act="vote-id" data-id="${idea.id}" data-v="1">♥ אהבתי</button>` : ''}</div>
+      </div></div>` : ''}<span class="meta">${time}</span></div>`;
   }
   return html + '</div>';
 }
@@ -396,7 +414,7 @@ function composerHtml() {
   return `<form class="composer" id="composer">
     <button type="button" class="attach" data-act-c="attach" aria-label="שליחת רעיון">🎲</button>
     <textarea id="msg" rows="1" placeholder="מה בא לך השבוע?"></textarea>
-    <button class="send" type="submit" aria-label="שליחה">➤</button>
+    <button class="send" type="submit" aria-label="שליחה">${ICON.send}</button>
   </form>`;
 }
 function bindComposer() {
@@ -427,9 +445,9 @@ async function onMainClick(e) {
   const b = e.target.closest('[data-act]'); if (!b) return;
   const id = b.dataset.id ? Number(b.dataset.id) : null;
   switch (b.dataset.act) {
-    case 'goto': go(b.dataset.tab); break;
+    case 'goto': if (b.dataset.mode) S.voteMode = b.dataset.mode; go(b.dataset.tab); break;
     case 'vmode': S.voteMode = b.dataset.mode; render(); break;
-    case 'next': pickRandomIdea(); render(); break;
+    case 'next': pickRandomIdea(); S.popIdea = true; render(); S.popIdea = false; break;
     case 'vote-pending': S.voteMode = 'random'; S.currentIdeaId = null; pickRandomIdea(true); go('vote'); break;
     case 'vote': await castVote(S.currentIdeaId, Number(b.dataset.v), true); break;
     case 'vote-id': await castVote(id, Number(b.dataset.v), false); break;
@@ -481,7 +499,7 @@ function openSchedule({ idea = null, date = null }) {
       <label class="field"><span>איפה (לא חובה)</span><input name="place" value="${esc(d.place || '')}" placeholder="שם המקום או העיר"></label>
       <label class="field"><span>הערות ומשימות</span><textarea name="notes" placeholder="למשל: לארגן בייביסיטר, להזמין מקום">${esc(d.notes || '')}</textarea></label>
       <div class="btns">
-        <button class="btn rose" type="submit">${date ? 'שמירה' : 'קובעים! ♥'}</button>
+        <button class="btn " type="submit">${date ? 'שמירה' : 'קובעים! ♥'}</button>
         ${date && d.status === 'planned' ? '<button class="btn ghost" type="button" data-cancel>ביטול הדייט</button>' : ''}
         <button class="btn ghost" type="button" data-close>סגירה</button>
       </div>
@@ -524,7 +542,7 @@ function openAddIdea() {
         <label class="field"><span>משך</span><select name="duration">${Object.entries(DUR).map(([k, v]) => `<option value="${k}" ${k === 'evening' ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
       </div>
       <label class="field"><span>עלות משוערת (₪)</span><input name="cost" type="number" inputmode="numeric" min="0" step="10" value="300"></label>
-      <div class="btns"><button class="btn rose" type="submit">הוספה</button><button class="btn ghost" type="button" data-close>סגירה</button></div>
+      <div class="btns"><button class="btn" type="submit">הוספה</button><button class="btn ghost" type="button" data-close>סגירה</button></div>
     </form>`, (sheet) => {
     sheet.querySelector('#addidea').addEventListener('submit', async (e) => {
       e.preventDefault();

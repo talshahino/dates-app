@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" role="img" aria-label="טל ואילת">
+  <!-- Ayelet: curly blond -->
+  <g id="eilat">
+    <path d="M30 200 C30 160 50 142 76 142 C102 142 120 160 120 200 Z" fill="#FF4F7B"/>
+    <rect x="68" y="122" width="16" height="22" rx="7" fill="#F6D2BC"/>
+    <g fill="#F4C443">
+      <circle cx="46" cy="104" r="15"/><circle cx="44" cy="124" r="13"/><circle cx="52" cy="140" r="11"/>
+      <circle cx="104" cy="104" r="15"/><circle cx="106" cy="124" r="13"/><circle cx="98" cy="140" r="11"/>
+      <circle cx="52" cy="80" r="16"/><circle cx="98" cy="80" r="16"/>
+    </g>
+    <ellipse cx="75" cy="102" rx="25" ry="28" fill="#FBDECB"/>
+    <g fill="#F4C443">
+      <circle cx="58" cy="72" r="15"/><circle cx="75" cy="66" r="16"/><circle cx="92" cy="72" r="15"/>
+      <circle cx="64" cy="80" r="9"/><circle cx="86" cy="80" r="9"/>
+    </g>
+    <g fill="#E3A62C" opacity=".55">
+      <circle cx="70" cy="62" r="5"/><circle cx="90" cy="68" r="4"/><circle cx="50" cy="96" r="4"/><circle cx="102" cy="118" r="4"/>
+    </g>
+    <ellipse cx="66" cy="102" rx="3.2" ry="4" fill="#2A1E3D"/>
+    <ellipse cx="84" cy="102" rx="3.2" ry="4" fill="#2A1E3D"/>
+    <circle cx="61" cy="112" r="5" fill="#FF8FA8" opacity=".55"/>
+    <circle cx="89" cy="112" r="5" fill="#FF8FA8" opacity=".55"/>
+    <path d="M67 115 Q75 123 83 115" fill="none" stroke="#C2405F" stroke-width="3" stroke-linecap="round"/>
+  </g>
+  <!-- Tal: short black hair, short beard -->
+  <g id="tal">
+    <path d="M86 200 C86 158 106 140 132 140 C158 140 178 158 178 200 Z" fill="#19C2A0"/>
+    <rect x="124" y="118" width="16" height="24" rx="7" fill="#D9A47E"/>
+    <ellipse cx="132" cy="97" rx="26" ry="29" fill="#E7B590"/>
+    <ellipse cx="106" cy="99" rx="4" ry="6" fill="#DFA987"/>
+    <ellipse cx="158" cy="99" rx="4" ry="6" fill="#DFA987"/>
+    <path d="M106 90 C104 64 118 56 132 56 C148 56 162 64 158 90 C156 80 150 74 140 74 C128 76 118 72 112 76 C108 80 107 85 106 90 Z" fill="#1C1824"/>
+    <path d="M107 100 C108 118 118 128 132 128 C146 128 156 118 157 100 C153 110 148 112 142 111 C138 109 126 109 122 111 C116 112 111 110 107 100 Z" fill="#1C1824"/>
+    <path d="M124 114 Q132 120 140 114" fill="none" stroke="#F3E6EC" stroke-width="3" stroke-linecap="round"/>
+    <path d="M115 88 Q122 84 128 88" fill="none" stroke="#1C1824" stroke-width="3" stroke-linecap="round"/>
+    <path d="M136 88 Q142 84 149 88" fill="none" stroke="#1C1824" stroke-width="3" stroke-linecap="round"/>
+    <ellipse cx="122" cy="97" rx="3.2" ry="4" fill="#1C1824"/>
+    <ellipse cx="142" cy="97" rx="3.2" ry="4" fill="#1C1824"/>
+  </g>
+  <path d="M104 36 C104 28 92 26 92 36 C92 44 104 50 104 50 C104 50 116 44 116 36 C116 26 104 28 104 36 Z" fill="#FFC93C" stroke="#FF4F7B" stroke-width="3"/>
+</svg>
