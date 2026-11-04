@@ -1,5 +1,6 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 import { SUPABASE_URL, SUPABASE_KEY, COUPLE_EMAIL, PROFILES } from './config.js';
+import { sceneHtml, DEFAULT_ART } from './scenes.js';
 
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, storageKey: 'dates-auth' },
@@ -13,6 +14,7 @@ const S = {
   ideas: [],
   votes: [],      // {idea_id, profile, value}
   dates: [],
+  notes: [],      // date_notes
   messages: [],
   currentIdeaId: null,
   unread: 0,
@@ -32,6 +34,7 @@ const ICON = {
   vote: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 20.5s-7.5-4.6-7.5-10.2A4.3 4.3 0 0 1 12 7.6a4.3 4.3 0 0 1 7.5 2.7c0 5.6-7.5 10.2-7.5 10.2Z"/></svg>',
   dates: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="3.5" y="5" width="17" height="15.5" rx="4"/><path d="M8 3v4M16 3v4M3.5 10h17"/><circle cx="12" cy="15" r="1.6" fill="currentColor"/></svg>',
   chat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><path d="M4 6.5A3.5 3.5 0 0 1 7.5 3h9A3.5 3.5 0 0 1 20 6.5v6a3.5 3.5 0 0 1-3.5 3.5H10l-4.5 4v-4.2A3.5 3.5 0 0 1 4 12.5z"/></svg>',
+  plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>',
 };
 const COUPLE = 'icons/couple.svg';
@@ -66,6 +69,17 @@ function fmtDate(dstr) {
   return d.toLocaleDateString('he-IL', { weekday: 'long', day: 'numeric', month: 'long' });
 }
 const fmtTime = (t) => (t ? t.slice(0, 5) : '');
+// "היום בשעה 20:00" / "מחר בשעה 20:00" / "ביום שלישי, 10.11, בשעה 20:00"
+function whenText(d) {
+  const t = d.time_at ? ` בשעה ${fmtTime(d.time_at)}` : '';
+  if (d.date_on === todayStr()) return `היום${t}`;
+  if (d.date_on === todayStr(1)) return `מחר${t}`;
+  const dt = new Date(d.date_on + 'T12:00:00');
+  const wd = dt.toLocaleDateString('he-IL', { weekday: 'long' });
+  return `ב${wd}, ${dt.getDate()}.${dt.getMonth() + 1}${t ? ',' + t : ''}`;
+}
+const notesOf = (dateId) => S.notes.filter((n) => n.date_id === dateId);
+const avatar = (p, cls = '') => `<span class="av av-${p} ${cls}"><img src="icons/${p}.svg" alt="${nameOf(p)}"></span>`;
 const ideaById = (id) => S.ideas.find((i) => i.id === id);
 const voteOf = (ideaId, profile) => S.votes.find((v) => v.idea_id === ideaId && v.profile === profile)?.value ?? 0;
 const isMatch = (ideaId) => voteOf(ideaId, 'tal') === 1 && voteOf(ideaId, 'eilat') === 1;
@@ -129,17 +143,19 @@ async function startApp() {
 }
 
 async function loadAll() {
-  const [ideas, votes, dates, msgs] = await Promise.all([
+  const [ideas, votes, dates, msgs, notes] = await Promise.all([
     sb.from('ideas').select('*').order('id'),
     sb.from('votes').select('*'),
     sb.from('dates').select('*').order('date_on').order('time_at', { nullsFirst: false }),
     sb.from('messages').select('*').order('created_at', { ascending: false }).limit(200),
+    sb.from('date_notes').select('*').order('created_at'),
   ]);
   if (ideas.error?.status === 401 || ideas.error?.code === 'PGRST301') { await sb.auth.signOut(); return renderLogin(); }
   S.ideas = ideas.data || [];
   S.votes = votes.data || [];
   S.dates = dates.data || [];
   S.messages = (msgs.data || []).reverse();
+  S.notes = notes.data || [];
   computeUnread();
 }
 
@@ -161,6 +177,9 @@ function subscribe() {
     .on('postgres_changes', { event: '*', schema: 'public', table: 'dates' }, async () => {
       const { data } = await sb.from('dates').select('*').order('date_on').order('time_at', { nullsFirst: false });
       S.dates = data || []; render(true);
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'date_notes' }, async () => {
+      const { data } = await sb.from('date_notes').select('*').order('created_at'); S.notes = data || []; render(true);
     })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'ideas' }, async () => {
       const { data } = await sb.from('ideas').select('*').order('id'); S.ideas = data || []; render(true);
@@ -195,6 +214,16 @@ function renderShell() {
   });
   $('#who').addEventListener('click', openSettings);
   $('#main').addEventListener('click', onMainClick);
+  $('#main').addEventListener('submit', async (e) => {
+    const f = e.target.closest('.note-add'); if (!f) return;
+    e.preventDefault();
+    const input = f.querySelector('input'); const body = input.value.trim(); if (!body) return;
+    input.value = '';
+    const { data, error } = await sb.from('date_notes').insert({ date_id: Number(f.dataset.date), profile: S.me, body }).select().single();
+    if (error) return toast('ההערה לא נשמרה');
+    if (!S.notes.some((n) => n.id === data.id)) S.notes.push(data);
+    render();
+  });
 }
 
 function go(tab) {
@@ -206,19 +235,24 @@ let lastRenderKey = '';
 function render(soft = false) {
   const titles = { home: 'הדייטים שלנו', vote: 'מה עושים השבוע?', dates: 'היומן שלנו', chat: `צ׳אט עם ${nameOf(partner())}` };
   $('#title').textContent = titles[S.tab];
-  $('#who').innerHTML = `<span class="dot ${S.me}">${nameOf(S.me)[0]}</span>${nameOf(S.me)}`;
+  $('#who').innerHTML = `${avatar(S.me)}${nameOf(S.me)}`;
   $('#tabbar').querySelectorAll('[data-tab]').forEach((b) => {
     b.classList.toggle('on', b.dataset.tab === S.tab);
     b.querySelector('.badge')?.remove();
     if (b.dataset.tab === 'chat' && S.unread > 0) b.insertAdjacentHTML('beforeend', `<span class="badge">${S.unread}</span>`);
   });
   // keep the current random idea stable on soft re-renders
-  if (soft && S.tab === 'vote' && S.voteMode === 'random') { $('#main').innerHTML = viewVote(); return; }
+  if (soft && S.tab === 'vote' && S.voteMode === 'random') {
+    if (S.dragging) return;
+    $('#main').innerHTML = viewVote(); bindSwipe(); return;
+  }
+  if (soft && document.activeElement?.matches?.('.note-input')) return; // don't wipe a note being typed
   const views = { home: viewHome, vote: viewVote, dates: viewDates, chat: viewChat };
   const wasAtBottom = S.tab === 'chat' && (window.innerHeight + window.scrollY >= document.body.scrollHeight - 80);
   $('#main').innerHTML = views[S.tab]();
   $('#composer-slot').innerHTML = S.tab === 'chat' ? composerHtml() : '';
   if (S.tab === 'chat') bindComposer();
+  if (S.tab === 'vote' && S.voteMode === 'random') bindSwipe();
   const key = S.tab + S.messages.length;
   if (S.tab === 'chat' && (wasAtBottom || key !== lastRenderKey)) window.scrollTo(0, document.body.scrollHeight);
   lastRenderKey = key;
@@ -238,19 +272,22 @@ function viewHome() {
   const hour = new Date().getHours();
   const hello = hour < 5 ? 'לילה טוב' : hour < 12 ? 'בוקר טוב' : hour < 18 ? 'צהריים טובים' : 'ערב טוב';
   const next = up.find((d) => d.date_on !== todayStr());
-  const sub = today.length ? 'יש לכם דייט היום!' : next ? `הדייט הבא: ${fmtDate(next.date_on)}` : 'מה עושים השבוע?';
+  const focus = today[0] || next;
+  const sub = focus
+    ? `<p>יש לכם דייט ${esc(whenText(focus))}</p><p class="what">${esc(focus.title)}${focus.place ? ', ' + esc(focus.place) : ''}</p>`
+    : '<p>עוד לא קבעתם דייט. מה עושים השבוע?</p>';
 
   let html = `<section class="home-hero">
-    <div class="txt"><div class="hello">${hello},</div><h2>${esc(nameOf(S.me))}</h2><p>${esc(sub)}</p></div>
+    <div class="txt"><div class="hello">${hello},</div><h2>${esc(nameOf(S.me))}</h2>${sub}</div>
     <img src="${COUPLE}" alt="טל ואילת">
   </section>`;
 
   for (const d of today) {
     html += `<div class="reminder">
-      <div class="kicker">⏰ היום${d.time_at ? ' ב-' + fmtTime(d.time_at) : ''}</div>
+      <div class="kicker">⏰ ${esc(whenText(d))}</div>
       <h2>${esc(d.title)}</h2>
       ${d.place ? `<div>📍 ${esc(d.place)}</div>` : ''}
-      ${d.notes ? `<div class="note">📝 ${esc(d.notes)}</div>` : ''}
+      ${notesBlock(d)}
     </div>`;
   }
 
@@ -321,8 +358,9 @@ function viewVote() {
   else if (theirs === 1) note = `${esc(pn)} אהב/ה את זה 💕`;
   else if (theirs === -1) note = `${esc(pn)} פחות התלהב/ה מזה`;
 
-  html += `<div class="idea-card cat-${idea.category} ${S.popIdea ? 'pop' : ''}">
-    <div class="idea-art">${CAT[idea.category]?.em ?? '✨'}<span class="price">כ-${idea.cost} ₪</span></div>
+  html += `<div class="swipe-hint">גררו את הכרטיס הצידה לרעיון הבא</div>
+  <div class="card-stage"><div class="idea-card cat-${idea.category} ${S.enterFrom ? 'enter-' + S.enterFrom : ''}" id="swipe-card">
+    <div class="idea-art">${sceneHtml(idea)}<span class="price">כ-${idea.cost} ₪</span></div>
     <div class="idea-body">
       <h2>${esc(idea.title)}</h2>
       ${idea.description ? `<p class="muted" style="margin:0">${esc(idea.description)}</p>` : ''}
@@ -333,7 +371,7 @@ function viewVote() {
       </div>
       ${note ? `<div class="partner-note ${isMatch(idea.id) ? 'match' : ''}">${note}</div>` : ''}
     </div>
-  </div>
+  </div></div>
   <div class="vote-actions">
     <button class="round no" data-act="vote" data-v="-1">✕ לא בשבילי</button>
     <button class="round dice" data-act="next" aria-label="רעיון אחר">🎲</button>
@@ -369,13 +407,25 @@ function dateCard(d) {
       <div class="when">${fmtDate(d.date_on)}${d.time_at ? ', ' + fmtTime(d.time_at) : ''}</div>
       <h3>${esc(d.title)}</h3>
       ${d.place ? `<div class="muted small">📍 ${esc(d.place)}</div>` : ''}
-      ${d.notes ? `<div class="note">📝 ${esc(d.notes)}</div>` : ''}
+      ${notesBlock(d, !past)}
       <div class="muted small" style="margin-top:6px">${esc(nameOf(d.created_by))} קבע/ה${status}</div>
       <div class="acts">
         <button class="btn small ghost" data-act="edit-date" data-id="${d.id}">עריכה</button>
         ${d.status === 'planned' ? `<button class="btn small ghost" data-act="done-date" data-id="${d.id}">✓ היה</button>` : ''}
       </div>
     </div>
+  </div>`;
+}
+
+function notesBlock(d, canAdd = true) {
+  const list = notesOf(d.id);
+  // older dates may still carry a single note on the date row itself
+  const legacy = d.notes ? [{ id: 'l' + d.id, profile: d.created_by, body: d.notes }] : [];
+  const all = legacy.concat(list);
+  return `<div class="notes">
+    ${all.map((n) => `<div class="note-row">${avatar(n.profile, 'sm')}<div><b>${esc(nameOf(n.profile))}</b> ${esc(n.body)}</div>
+      ${n.profile === S.me && typeof n.id === 'number' ? `<button class="x" data-act="del-note" data-id="${n.id}" aria-label="מחיקה">✕</button>` : ''}</div>`).join('')}
+    ${canAdd ? `<form class="note-add" data-date="${d.id}"><input class="note-input" placeholder="+ הוספת הערה" maxlength="140"><button aria-label="הוספה">${ICON.plus}</button></form>` : ''}
   </div>`;
 }
 
@@ -447,7 +497,8 @@ async function onMainClick(e) {
   switch (b.dataset.act) {
     case 'goto': if (b.dataset.mode) S.voteMode = b.dataset.mode; go(b.dataset.tab); break;
     case 'vmode': S.voteMode = b.dataset.mode; render(); break;
-    case 'next': pickRandomIdea(); S.popIdea = true; render(); S.popIdea = false; break;
+    case 'next': nextIdea('left'); break;
+    case 'del-note': await sb.from('date_notes').delete().eq('id', id); S.notes = S.notes.filter((n) => n.id !== id); render(); break;
     case 'vote-pending': S.voteMode = 'random'; S.currentIdeaId = null; pickRandomIdea(true); go('vote'); break;
     case 'vote': await castVote(S.currentIdeaId, Number(b.dataset.v), true); break;
     case 'vote-id': await castVote(id, Number(b.dataset.v), false); break;
@@ -460,6 +511,53 @@ async function onMainClick(e) {
   }
 }
 
+function nextIdea(dir) {
+  pickRandomIdea();
+  S.enterFrom = dir === 'left' ? 'right' : 'left';
+  render();
+  S.enterFrom = null;
+}
+
+// drag the idea card sideways to get the next idea
+function bindSwipe() {
+  const card = $('#swipe-card'); if (!card) return;
+  let x0 = 0, y0 = 0, dx = 0, active = false, horizontal = null;
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  card.addEventListener('pointerdown', (e) => {
+    if (e.button > 0) return;
+    active = true; horizontal = null; x0 = e.clientX; y0 = e.clientY; dx = 0;
+    card.style.transition = 'none';
+  });
+  card.addEventListener('pointermove', (e) => {
+    if (!active) return;
+    dx = e.clientX - x0; const dy = e.clientY - y0;
+    if (horizontal === null && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
+      horizontal = Math.abs(dx) > Math.abs(dy);
+      if (horizontal) { card.setPointerCapture(e.pointerId); S.dragging = true; }
+    }
+    if (!horizontal) return;
+    card.style.transform = `translateX(${dx}px) rotate(${dx / 18}deg)`;
+  });
+  const end = () => {
+    if (!active) return; active = false;
+    if (!horizontal) return;
+    S.dragging = false;
+    if (Math.abs(dx) > 80) {
+      const dir = dx < 0 ? 'left' : 'right';
+      if (reduce) return nextIdea(dir);
+      card.style.transition = 'transform .25s ease-in, opacity .25s';
+      card.style.transform = `translateX(${dx < 0 ? -140 : 140}%) rotate(${dx < 0 ? -18 : 18}deg)`;
+      card.style.opacity = '0';
+      setTimeout(() => nextIdea(dir), 220);
+    } else {
+      card.style.transition = 'transform .3s cubic-bezier(.2,1.4,.4,1)';
+      card.style.transform = '';
+    }
+  };
+  card.addEventListener('pointerup', end);
+  card.addEventListener('pointercancel', end);
+}
+
 async function castVote(ideaId, value, advance) {
   if (!ideaId) return;
   const row = { idea_id: ideaId, profile: S.me, value, updated_at: new Date().toISOString() };
@@ -470,7 +568,7 @@ async function castVote(ideaId, value, advance) {
     toast('💞 יש התאמה! אפשר לקבוע דייט');
     openSchedule({ idea: ideaById(ideaId) });
   } else if (advance) {
-    pickRandomIdea();
+    return nextIdea(value === 1 ? 'right' : 'left');
   }
   render();
 }
@@ -497,7 +595,7 @@ function openSchedule({ idea = null, date = null }) {
         <label class="field"><span>שעה</span><input name="time_at" type="time" value="${esc(fmtTime(d.time_at))}"></label>
       </div>
       <label class="field"><span>איפה (לא חובה)</span><input name="place" value="${esc(d.place || '')}" placeholder="שם המקום או העיר"></label>
-      <label class="field"><span>הערות ומשימות</span><textarea name="notes" placeholder="למשל: לארגן בייביסיטר, להזמין מקום">${esc(d.notes || '')}</textarea></label>
+      ${date ? '' : '<label class="field"><span>הערה ראשונה (לא חובה)</span><input name="notes" placeholder="למשל: לארגן בייביסיטר"></label>'}
       <div class="btns">
         <button class="btn " type="submit">${date ? 'שמירה' : 'קובעים! ♥'}</button>
         ${date && d.status === 'planned' ? '<button class="btn ghost" type="button" data-cancel>ביטול הדייט</button>' : ''}
@@ -513,16 +611,20 @@ function openSchedule({ idea = null, date = null }) {
       const fd = Object.fromEntries(new FormData(e.target));
       const row = {
         title: fd.title.trim(), date_on: fd.date_on, time_at: fd.time_at || null,
-        place: fd.place.trim() || null, notes: fd.notes.trim() || null,
+        place: fd.place.trim() || null,
       };
+      const firstNote = (fd.notes || '').trim();
       const btn = e.target.querySelector('[type=submit]'); btn.disabled = true;
       let res;
       if (date) res = await sb.from('dates').update(row).eq('id', d.id);
-      else res = await sb.from('dates').insert({ ...row, idea_id: idea?.id ?? null, created_by: S.me });
+      else res = await sb.from('dates').insert({ ...row, idea_id: idea?.id ?? null, created_by: S.me }).select().single();
       if (res.error) { btn.disabled = false; return toast('לא נשמר, נסו שוב'); }
       if (!date) {
-        const when = `${fmtDate(row.date_on)}${row.time_at ? ' ב-' + row.time_at : ''}`;
-        await sendMessage({ body: `📅 קבעתי לנו: ${row.title}, ${when}${row.notes ? '\n📝 ' + row.notes : ''}` });
+        if (firstNote) {
+          const n = await sb.from('date_notes').insert({ date_id: res.data.id, profile: S.me, body: firstNote }).select().single();
+          if (n.data) S.notes.push(n.data);
+        }
+        await sendMessage({ body: `📅 קבעתי לנו: ${row.title}, ${whenText(row)}${firstNote ? '\n📝 ' + firstNote : ''}` });
       }
       closeSheet(); toast(date ? 'נשמר' : 'הדייט נקבע ♥');
       const { data } = await sb.from('dates').select('*').order('date_on').order('time_at', { nullsFirst: false });
@@ -549,7 +651,7 @@ function openAddIdea() {
       const fd = Object.fromEntries(new FormData(e.target));
       const { data, error } = await sb.from('ideas').insert({
         title: fd.title.trim(), description: fd.description.trim() || null, category: fd.category,
-        duration: fd.duration, cost: Number(fd.cost) || 0, created_by: S.me,
+        duration: fd.duration, cost: Number(fd.cost) || 0, created_by: S.me, art: DEFAULT_ART[fd.category],
       }).select().single();
       if (error) return toast('לא נשמר');
       S.ideas.push(data);

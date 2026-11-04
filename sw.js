@@ -1,6 +1,6 @@
 // Service worker: offline shell (push notifications added in stage 3)
-const CACHE = 'dates-v1';
-const SHELL = ['./', './index.html', './styles.css', './app.js', './config.js', './manifest.webmanifest', './icons/icon-192.png'];
+const CACHE = 'dates-v2';
+const SHELL = ['./', './index.html', './styles.css', './app.js', './scenes.js', './config.js', './manifest.webmanifest', './icons/icon-192.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
