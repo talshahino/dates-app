@@ -1,6 +1,7 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 import { SUPABASE_URL, SUPABASE_KEY, COUPLE_EMAIL, PROFILES } from './config.js';
 import { sceneHtml, DEFAULT_ART } from './scenes.js';
+import { makeMovie, pickMime } from './movie.js';
 
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, storageKey: 'dates-auth' },
@@ -15,6 +16,10 @@ const S = {
   votes: [],      // {idea_id, profile, value}
   dates: [],
   notes: [],      // date_notes
+  memories: [],
+  movies: [],
+  settings: {},
+  urls: {},       // storage path -> signed url
   messages: [],
   currentIdeaId: null,
   unread: 0,
@@ -33,11 +38,19 @@ const ICON = {
   home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v9.5h13V10"/><path d="M10 19.5v-5h4v5"/></svg>',
   vote: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 20.5s-7.5-4.6-7.5-10.2A4.3 4.3 0 0 1 12 7.6a4.3 4.3 0 0 1 7.5 2.7c0 5.6-7.5 10.2-7.5 10.2Z"/></svg>',
   dates: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="3.5" y="5" width="17" height="15.5" rx="4"/><path d="M8 3v4M16 3v4M3.5 10h17"/><circle cx="12" cy="15" r="1.6" fill="currentColor"/></svg>',
+  album: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><rect x="3" y="5" width="18" height="15" rx="4"/><circle cx="12" cy="12.5" r="3.6"/><path d="M8 5l1.4-2h5.2L16 5"/></svg>',
   chat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><path d="M4 6.5A3.5 3.5 0 0 1 7.5 3h9A3.5 3.5 0 0 1 20 6.5v6a3.5 3.5 0 0 1-3.5 3.5H10l-4.5 4v-4.2A3.5 3.5 0 0 1 4 12.5z"/></svg>',
   plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>',
 };
 const COUPLE = 'icons/couple.svg';
+const FEEL = {
+  perfect: { em: '😍', label: 'היה מושלם' },
+  enjoyed: { em: '🥰', label: 'נהנינו' },
+  nice:    { em: '🙂', label: 'היה נחמד' },
+  meh:     { em: '😕', label: 'לא משהו' },
+};
+const FREQ = { date: 'אחרי כל דייט', day: 'כל יום', week: 'כל שבוע', month: 'כל חודש' };
 const DUR = {
   short: 'עד שעתיים', evening: 'ערב', halfday: 'חצי יום', fullday: 'יום שלם', overnight: 'לילה',
 };
@@ -143,12 +156,15 @@ async function startApp() {
 }
 
 async function loadAll() {
-  const [ideas, votes, dates, msgs, notes] = await Promise.all([
+  const [ideas, votes, dates, msgs, notes, mems, movies, settings] = await Promise.all([
     sb.from('ideas').select('*').order('id'),
     sb.from('votes').select('*'),
     sb.from('dates').select('*').order('date_on').order('time_at', { nullsFirst: false }),
     sb.from('messages').select('*').order('created_at', { ascending: false }).limit(200),
     sb.from('date_notes').select('*').order('created_at'),
+    sb.from('memories').select('*').order('taken_on', { ascending: false }).order('created_at', { ascending: false }),
+    sb.from('movies').select('*').order('created_at', { ascending: false }),
+    sb.from('settings').select('*'),
   ]);
   if (ideas.error?.status === 401 || ideas.error?.code === 'PGRST301') { await sb.auth.signOut(); return renderLogin(); }
   S.ideas = ideas.data || [];
@@ -156,6 +172,9 @@ async function loadAll() {
   S.dates = dates.data || [];
   S.messages = (msgs.data || []).reverse();
   S.notes = notes.data || [];
+  S.memories = mems.data || [];
+  S.movies = movies.data || [];
+  S.settings = Object.fromEntries((settings.data || []).map((r) => [r.key, r.value]));
   computeUnread();
 }
 
@@ -181,6 +200,16 @@ function subscribe() {
     .on('postgres_changes', { event: '*', schema: 'public', table: 'date_notes' }, async () => {
       const { data } = await sb.from('date_notes').select('*').order('created_at'); S.notes = data || []; render(true);
     })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'memories' }, async () => {
+      const { data } = await sb.from('memories').select('*').order('taken_on', { ascending: false }).order('created_at', { ascending: false });
+      S.memories = data || []; render(true);
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'movies' }, async () => {
+      const { data } = await sb.from('movies').select('*').order('created_at', { ascending: false }); S.movies = data || []; render(true);
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'settings' }, async () => {
+      const { data } = await sb.from('settings').select('*'); S.settings = Object.fromEntries((data || []).map((r) => [r.key, r.value])); render(true);
+    })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'ideas' }, async () => {
       const { data } = await sb.from('ideas').select('*').order('id'); S.ideas = data || []; render(true);
     })
@@ -205,7 +234,7 @@ function renderShell() {
     <main id="main"></main>
     <div id="composer-slot"></div>
     <nav class="tabbar" id="tabbar">
-      ${[['home', 'בית'], ['vote', 'הצבעה'], ['dates', 'דייטים'], ['chat', 'צ׳אט']]
+      ${[['home', 'בית'], ['vote', 'הצבעה'], ['dates', 'דייטים'], ['album', 'אלבום'], ['chat', 'צ׳אט']]
         .map(([k, l]) => `<button data-tab="${k}">${ICON[k]}${l}</button>`).join('')}
     </nav>`;
   $('#tabbar').addEventListener('click', (e) => {
@@ -233,7 +262,7 @@ function go(tab) {
 
 let lastRenderKey = '';
 function render(soft = false) {
-  const titles = { home: 'הדייטים שלנו', vote: 'מה עושים השבוע?', dates: 'היומן שלנו', chat: `צ׳אט עם ${nameOf(partner())}` };
+  const titles = { home: 'הדייטים שלנו', vote: 'מה עושים השבוע?', dates: 'היומן שלנו', album: 'האלבום שלנו', chat: `צ׳אט עם ${nameOf(partner())}` };
   $('#title').textContent = titles[S.tab];
   $('#who').innerHTML = `${avatar(S.me)}${nameOf(S.me)}`;
   $('#tabbar').querySelectorAll('[data-tab]').forEach((b) => {
@@ -247,12 +276,14 @@ function render(soft = false) {
     $('#main').innerHTML = viewVote(); bindSwipe(); return;
   }
   if (soft && document.activeElement?.matches?.('.note-input')) return; // don't wipe a note being typed
-  const views = { home: viewHome, vote: viewVote, dates: viewDates, chat: viewChat };
+  if (soft && S.busy) return; // a movie is being made
+  const views = { home: viewHome, vote: viewVote, dates: viewDates, album: viewAlbum, chat: viewChat };
   const wasAtBottom = S.tab === 'chat' && (window.innerHeight + window.scrollY >= document.body.scrollHeight - 80);
   $('#main').innerHTML = views[S.tab]();
   $('#composer-slot').innerHTML = S.tab === 'chat' ? composerHtml() : '';
   if (S.tab === 'chat') bindComposer();
   if (S.tab === 'vote' && S.voteMode === 'random') bindSwipe();
+  hydrateMedia();
   const key = S.tab + S.messages.length;
   if (S.tab === 'chat' && (wasAtBottom || key !== lastRenderKey)) window.scrollTo(0, document.body.scrollHeight);
   lastRenderKey = key;
@@ -297,6 +328,15 @@ function viewHome() {
       <button class="btn" data-act="goto" data-tab="vote">🎲 להגריל רעיון</button></div>`;
   }
 
+  for (const d of awaitingFeedback()) {
+    html += `<div class="card ask">
+      <b>איך היה ${esc(d.title)}?</b>
+      <p class="muted small" style="margin:2px 0 10px">${esc(fmtDate(d.date_on))}${d.place ? ', ' + esc(d.place) : ''}</p>
+      <div class="feel-row">${Object.entries(FEEL).map(([k, f]) => `<button data-act="feel" data-id="${d.id}" data-f="${k}"><span>${f.em}</span>${f.label}</button>`).join('')}</div>
+      <button class="linkish small" data-act="feel" data-id="${d.id}" data-f="skip">לא יצא לנו</button>
+    </div>`;
+  }
+
   html += `<div class="tiles">
     <button class="tile mint" data-act="goto" data-tab="vote" data-mode="matches">
       <span class="big">${matches.length}</span><div><b>התאמות</b><br><span>רעיונות ששניכם אהבתם</span></div>
@@ -307,6 +347,16 @@ function viewHome() {
   </div>`;
 
   if (next) html += `<h3 class="section-title">הדייט הבא</h3>${dateCard(next)}`;
+
+  const mem = memoryOfTheDay();
+  if (mem) {
+    const d = S.dates.find((x) => x.id === mem.date_id);
+    html += `<h3 class="section-title">זוכרים? 💭</h3>
+    <button class="memory-hero" data-act="view-mem" data-id="${mem.id}">
+      ${mediaTag(mem, 'cover')}
+      <span class="cap"><b>${esc(d?.title || mem.caption || 'רגע שלנו')}</b><span>${esc(agoText(mem.taken_on))}${d?.place ? ', ' + esc(d.place) : ''}</span></span>
+    </button>`;
+  }
 
   if (pendingForMe.length) {
     html += `<div class="card" style="margin-top:14px"><b>${esc(nameOf(partner()))} אהב/ה ${pendingForMe.length === 1 ? 'רעיון שעוד לא הצבעת עליו' : pendingForMe.length + ' רעיונות שעוד לא הצבעת עליהם'}</b>
@@ -408,10 +458,13 @@ function dateCard(d) {
       <h3>${esc(d.title)}</h3>
       ${d.place ? `<div class="muted small">📍 ${esc(d.place)}</div>` : ''}
       ${notesBlock(d, !past)}
+      ${d.feeling ? `<div class="feel-chip">${FEEL[d.feeling].em} ${FEEL[d.feeling].label}</div>` : ''}
+      ${memStrip(d)}
       <div class="muted small" style="margin-top:6px">${esc(nameOf(d.created_by))} קבע/ה${status}</div>
       <div class="acts">
         <button class="btn small ghost" data-act="edit-date" data-id="${d.id}">עריכה</button>
         ${d.status === 'planned' ? `<button class="btn small ghost" data-act="done-date" data-id="${d.id}">✓ היה</button>` : ''}
+        ${d.status !== 'cancelled' ? `<button class="btn small ghost" data-act="add-mem" data-id="${d.id}">📷 תמונות</button>` : ''}
       </div>
     </div>
   </div>`;
@@ -506,7 +559,15 @@ async function onMainClick(e) {
     case 'schedule': openSchedule({ idea: ideaById(id) }); break;
     case 'schedule-free': openSchedule({}); break;
     case 'edit-date': openSchedule({ date: S.dates.find((d) => d.id === id) }); break;
-    case 'done-date': await sb.from('dates').update({ status: 'done' }).eq('id', id); toast('איזה כיף! ✓'); break;
+    case 'done-date': openFeedback(S.dates.find((d) => d.id === id)); break;
+    case 'feel': await saveFeeling(id, b.dataset.f); break;
+    case 'add-mem': pickMedia({ dateId: id, camera: false }); break;
+    case 'camera': pickMedia({ dateId: S.albumDate, camera: true }); break;
+    case 'gallery': pickMedia({ dateId: S.albumDate, camera: false }); break;
+    case 'view-mem': openViewer(id); break;
+    case 'freq': await setFreq(b.dataset.f); break;
+    case 'make-movie': await startMovie(b.dataset.period); break;
+    case 'share-movie': await shareMovie(id); break;
     case 'add-idea': openAddIdea(); break;
   }
 }
@@ -677,4 +738,364 @@ function openSettings() {
       await sb.auth.signOut(); lsDel('dates-profile'); S.me = null; closeSheet(); renderLogin();
     });
   });
+}
+
+// ============================================================
+// Feedback after a date
+// ============================================================
+function awaitingFeedback() {
+  const now = new Date();
+  return S.dates.filter((d) => {
+    if (d.status !== 'planned') return false;
+    if (d.date_on < todayStr()) return true;
+    if (d.date_on === todayStr() && d.time_at) {
+      const [h, m] = d.time_at.split(':').map(Number);
+      return now.getHours() * 60 + now.getMinutes() > h * 60 + m + 180; // 3 hours after start
+    }
+    return false;
+  }).slice(0, 2);
+}
+
+function openFeedback(d) {
+  if (!d) return;
+  openSheet(`
+    <h2>איך היה ${esc(d.title)}?</h2>
+    <div class="feel-row big">${Object.entries(FEEL).map(([k, f]) => `<button data-f="${k}"><span>${f.em}</span>${f.label}</button>`).join('')}</div>
+    <div class="btns"><button class="btn ghost" data-f="skip">לא יצא לנו</button><button class="btn ghost" data-close>סגירה</button></div>`, (sheet) => {
+    sheet.querySelectorAll('[data-f]').forEach((b) => b.addEventListener('click', () => saveFeeling(d.id, b.dataset.f)));
+  });
+}
+
+async function saveFeeling(id, f) {
+  const row = f === 'skip' ? { status: 'cancelled' } : { status: 'done', feeling: f };
+  const { error } = await sb.from('dates').update(row).eq('id', id);
+  if (error) return toast('לא נשמר, נסו שוב');
+  const d = S.dates.find((x) => x.id === id); Object.assign(d, row);
+  closeSheet(); render();
+  if (f === 'skip') return toast('אין דבר, יהיו עוד הרבה 💜');
+  openSheet(`
+    <div class="center-ask"><div class="em-big">${FEEL[f].em}</div>
+      <h2>${FEEL[f].label}!</h2>
+      <p class="muted">רוצים לשמור תמונות או סרטונים מ${esc(d.title)}?</p></div>
+    <div class="btns">
+      <button class="btn" data-cam>📷 לצלם עכשיו</button>
+      <button class="btn violet" data-gal>🖼️ לבחור מהגלריה</button>
+      <button class="btn ghost" data-close>אחר כך</button>
+    </div>`, (sheet) => {
+    sheet.querySelector('[data-cam]').addEventListener('click', () => { closeSheet(); pickMedia({ dateId: id, camera: true }); });
+    sheet.querySelector('[data-gal]').addEventListener('click', () => { closeSheet(); pickMedia({ dateId: id, camera: false }); });
+  });
+}
+
+// ============================================================
+// Media: signed URLs, tags, upload
+// ============================================================
+const BUCKET = 'memories';
+
+async function ensureUrls(paths) {
+  const now = Date.now();
+  const need = [...new Set(paths)].filter((p) => p && !(S.urls[p] && S.urls[p].exp > now));
+  if (!need.length) return;
+  const { data } = await sb.storage.from(BUCKET).createSignedUrls(need, 3600);
+  (data || []).forEach((r) => { if (r.signedUrl) S.urls[r.path] = { url: r.signedUrl, exp: now + 50 * 60 * 1000 }; });
+}
+const urlOf = (p) => S.urls[p]?.url;
+
+async function hydrateMedia() {
+  const els = [...document.querySelectorAll('[data-path]')].filter((el) => !el.getAttribute('src'));
+  if (!els.length) return;
+  await ensureUrls(els.map((el) => el.dataset.path));
+  els.forEach((el) => { const u = urlOf(el.dataset.path); if (u) el.src = u; });
+}
+
+function mediaTag(m, cls = '') {
+  if (m.kind === 'image') return `<img class="${cls}" data-path="${esc(m.path)}" alt="" loading="lazy">`;
+  if (m.thumb_path) return `<span class="vid ${cls}"><img class="${cls}" data-path="${esc(m.thumb_path)}" alt="" loading="lazy"><i>▶</i></span>`;
+  return `<span class="vid ${cls}"><video class="${cls}" data-path="${esc(m.path)}#t=0.5" muted playsinline preload="metadata"></video><i>▶</i></span>`;
+}
+
+function memStrip(d) {
+  const ms = S.memories.filter((m) => m.date_id === d.id).slice(0, 4);
+  if (!ms.length) return '';
+  const more = S.memories.filter((m) => m.date_id === d.id).length - ms.length;
+  return `<div class="mem-strip">${ms.map((m) => `<button data-act="view-mem" data-id="${m.id}">${mediaTag(m)}</button>`).join('')}${more > 0 ? `<span class="more">+${more}</span>` : ''}</div>`;
+}
+
+function agoText(day) {
+  const days = Math.round((new Date(todayStr() + 'T12:00:00') - new Date(day + 'T12:00:00')) / 864e5);
+  if (days <= 0) return 'היום';
+  if (days === 1) return 'אתמול';
+  if (days < 7) return `לפני ${days} ימים`;
+  if (days < 14) return 'לפני שבוע';
+  if (days < 31) return `לפני ${Math.round(days / 7)} שבועות`;
+  if (days < 60) return 'לפני חודש';
+  if (days < 365) return `לפני ${Math.round(days / 30)} חודשים`;
+  return days < 730 ? 'לפני שנה' : `לפני ${Math.round(days / 365)} שנים`;
+}
+
+function memoryOfTheDay() {
+  const old = S.memories.filter((m) => m.taken_on < todayStr(-2) && (m.kind === 'image' || m.thumb_path));
+  const pool = old.length ? old : [];
+  if (!pool.length) return null;
+  const dayIndex = Math.floor(Date.now() / 864e5);
+  return pool[dayIndex % pool.length];
+}
+
+function pickMedia({ dateId = null, camera = false }) {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/*,video/*';
+  if (camera) input.setAttribute('capture', 'environment'); else input.multiple = true;
+  input.style.display = 'none';
+  document.body.appendChild(input);
+  input.addEventListener('change', () => { uploadFiles([...input.files], dateId); input.remove(); });
+  input.click();
+}
+
+async function resizeImage(file, max = 1920) {
+  try {
+    const bmp = await createImageBitmap(file);
+    const s = Math.min(1, max / Math.max(bmp.width, bmp.height));
+    const c = document.createElement('canvas');
+    c.width = Math.round(bmp.width * s); c.height = Math.round(bmp.height * s);
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+    return await new Promise((res) => c.toBlob((b) => res(b || file), 'image/jpeg', 0.86));
+  } catch { return file; }
+}
+
+function videoThumb(file) {
+  return new Promise((resolve) => {
+    const v = document.createElement('video');
+    const url = URL.createObjectURL(file);
+    v.muted = true; v.playsInline = true; v.preload = 'auto'; v.src = url;
+    const fail = () => { URL.revokeObjectURL(url); resolve(null); };
+    const t = setTimeout(fail, 8000);
+    v.onloadeddata = () => { v.currentTime = Math.min(0.5, (v.duration || 1) / 2); };
+    v.onseeked = () => {
+      clearTimeout(t);
+      const s = Math.min(1, 720 / Math.max(v.videoWidth, v.videoHeight));
+      const c = document.createElement('canvas');
+      c.width = Math.round(v.videoWidth * s); c.height = Math.round(v.videoHeight * s);
+      c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+      c.toBlob((b) => { URL.revokeObjectURL(url); resolve(b); }, 'image/jpeg', 0.8);
+    };
+    v.onerror = fail;
+  });
+}
+
+async function uploadFiles(files, dateId) {
+  if (!files.length) return;
+  const date = S.dates.find((d) => d.id === dateId);
+  const takenOn = date?.date_on && date.date_on <= todayStr() ? date.date_on : todayStr();
+  let ok = 0;
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i];
+    const isVideo = f.type.startsWith('video');
+    toast(`מעלה ${i + 1} מתוך ${files.length}…`);
+    if (isVideo && f.size > 50 * 1024 * 1024) { toast('הסרטון גדול מדי. צלמו קטע קצר, עד כחצי דקה'); continue; }
+    const base = `${dateId || 'free'}/${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const body = isVideo ? f : await resizeImage(f);
+    const ext = isVideo ? (f.name.split('.').pop() || 'mp4').toLowerCase() : 'jpg';
+    const path = `${base}.${ext}`;
+    const up = await sb.storage.from(BUCKET).upload(path, body, { contentType: isVideo ? f.type || 'video/mp4' : 'image/jpeg' });
+    if (up.error) { toast('ההעלאה נכשלה'); continue; }
+    let thumb_path = null;
+    if (isVideo) {
+      const tb = await videoThumb(f);
+      if (tb) {
+        const tp = `${base}-thumb.jpg`;
+        const tu = await sb.storage.from(BUCKET).upload(tp, tb, { contentType: 'image/jpeg' });
+        if (!tu.error) thumb_path = tp;
+      }
+    }
+    const { data, error } = await sb.from('memories').insert({
+      date_id: dateId, profile: S.me, kind: isVideo ? 'video' : 'image', path, thumb_path, taken_on: takenOn,
+    }).select().single();
+    if (!error && data) { if (!S.memories.some((m) => m.id === data.id)) S.memories.unshift(data); ok++; }
+  }
+  if (ok) {
+    toast(ok === 1 ? 'נשמר באלבום ♥' : `${ok} רגעים נשמרו באלבום ♥`);
+    if (dateId) await sendMessage({ body: `📷 העליתי ${ok === 1 ? 'רגע' : ok + ' רגעים'} מ${date?.title || 'הדייט'}` });
+  }
+  render();
+}
+
+function openViewer(id) {
+  const m = S.memories.find((x) => x.id === id); if (!m) return;
+  const d = S.dates.find((x) => x.id === m.date_id);
+  openSheet(`
+    <div class="viewer">${m.kind === 'image'
+      ? `<img data-path="${esc(m.path)}" alt="">`
+      : `<video data-path="${esc(m.path)}" controls playsinline autoplay></video>`}</div>
+    <h2 style="margin-top:12px">${esc(d?.title || 'רגע שלנו')}</h2>
+    <p class="muted" style="margin-top:-8px">${esc(agoText(m.taken_on))}${d?.place ? ', ' + esc(d.place) : ''}, ${esc(nameOf(m.profile))} העלה/תה</p>
+    <div class="btns">
+      ${m.profile === S.me ? '<button class="btn ghost" data-del>מחיקה מהאלבום</button>' : ''}
+      <button class="btn" data-close>סגירה</button>
+    </div>`, async (sheet) => {
+    await hydrateMedia();
+    sheet.querySelector('[data-del]')?.addEventListener('click', async () => {
+      if (!confirm('למחוק את הרגע הזה מהאלבום?')) return;
+      await sb.storage.from(BUCKET).remove([m.path, m.thumb_path].filter(Boolean));
+      await sb.from('memories').delete().eq('id', m.id);
+      S.memories = S.memories.filter((x) => x.id !== m.id);
+      closeSheet(); render(); toast('נמחק');
+    });
+  });
+}
+
+// ============================================================
+// Album screen + love movies
+// ============================================================
+function periodKey(m, freq) {
+  const day = m.taken_on;
+  if (freq === 'date') return m.date_id ? `date-${m.date_id}` : `day-${day}`;
+  if (freq === 'day') return `day-${day}`;
+  if (freq === 'month') return `month-${day.slice(0, 7)}`;
+  const d = new Date(day + 'T12:00:00'); d.setDate(d.getDate() - d.getDay()); // week starts Sunday
+  return `week-${d.toLocaleDateString('en-CA')}`;
+}
+function periodTitle(key) {
+  const [type, ...rest] = key.split('-'); const v = rest.join('-');
+  const dm = (s) => { const d = new Date(s + 'T12:00:00'); return `${d.getDate()}.${d.getMonth() + 1}`; };
+  if (type === 'date') { const d = S.dates.find((x) => x.id === Number(v)); return d ? d.title : 'הדייט שלנו'; }
+  if (type === 'day') return `היום שלנו, ${dm(v)}`;
+  if (type === 'week') return `השבוע שלנו, מ-${dm(v)}`;
+  if (type === 'month') return new Date(v + '-15T12:00:00').toLocaleDateString('he-IL', { month: 'long', year: 'numeric' });
+  return key;
+}
+function periods() {
+  const freq = S.settings.movie_freq || 'week';
+  const map = new Map();
+  for (const m of S.memories) {
+    const k = periodKey(m, freq);
+    if (!map.has(k)) map.set(k, []);
+    map.get(k).push(m);
+  }
+  return [...map.entries()].map(([key, items]) => ({ key, items }));
+}
+
+function viewAlbum() {
+  const recentDates = S.dates.filter((d) => d.status !== 'cancelled' && d.date_on <= todayStr(1)).slice(-8).reverse();
+  if (S.albumDate === undefined) S.albumDate = recentDates[0]?.id ?? null;
+  const freq = S.settings.movie_freq || 'week';
+  const canMake = !!pickMime();
+
+  let html = `<div class="shoot">
+    <button class="shoot-btn cam" data-act="camera"><span class="ic">📷</span><b>לצלם</b><span>תמונה או סרטון</span></button>
+    <button class="shoot-btn gal" data-act="gallery"><span class="ic">🖼️</span><b>מהגלריה</b><span>כמה שרוצים</span></button>
+  </div>
+  <label class="field attach-to"><span>הרגעים יישמרו תחת</span>
+    <select data-album-date>
+      <option value="">בלי דייט מסוים</option>
+      ${recentDates.map((d) => `<option value="${d.id}" ${S.albumDate === d.id ? 'selected' : ''}>${esc(d.title)}, ${esc(fmtDate(d.date_on))}</option>`).join('')}
+    </select>
+  </label>`;
+
+  html += `<h3 class="section-title">סרטוני אהבה 🎬</h3>
+  <div class="freq">${Object.entries(FREQ).map(([k, l]) => `<button data-act="freq" data-f="${k}" class="${freq === k ? 'on' : ''}">${l}</button>`).join('')}</div>`;
+
+  const ps = periods().slice(0, 6);
+  if (!ps.length) {
+    html += `<div class="empty small"><span class="ic">🎞️</span>אחרי שתעלו תמונות, ניצור מהן סרטון עם מוזיקה רומנטית.</div>`;
+  }
+  for (const p of ps) {
+    const movie = S.movies.find((mv) => mv.period === p.key);
+    if (movie) {
+      html += `<div class="movie-card">
+        <video data-path="${esc(movie.path)}" controls playsinline preload="metadata"></video>
+        <div class="row"><b>${esc(movie.title)}</b><button class="btn small ghost" data-act="share-movie" data-id="${movie.id}">שמירה ושיתוף</button></div>
+      </div>`;
+    } else {
+      const cover = p.items.find((m) => m.kind === 'image' || m.thumb_path);
+      html += `<div class="movie-todo">
+        <div class="thumb">${cover ? mediaTag(cover) : '🎞️'}</div>
+        <div class="txt"><b>${esc(periodTitle(p.key))}</b><span class="muted small">${p.items.length} רגעים מחכים לסרטון</span></div>
+        ${canMake ? `<button class="btn small" data-act="make-movie" data-period="${esc(p.key)}">✨ ליצור</button>` : '<span class="muted small">לא נתמך במכשיר</span>'}
+      </div>`;
+    }
+  }
+
+  html += `<h3 class="section-title">הרגעים שלנו</h3>`;
+  if (!S.memories.length) {
+    html += `<div class="empty"><span class="ic">📸</span>עוד אין כאן רגעים. צלמו משהו בדייט הבא!</div>`;
+  } else {
+    const groups = new Map();
+    for (const m of S.memories) {
+      const k = m.date_id ? `d${m.date_id}` : `t${m.taken_on}`;
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(m);
+    }
+    for (const [k, ms] of groups) {
+      const d = k[0] === 'd' ? S.dates.find((x) => x.id === Number(k.slice(1))) : null;
+      html += `<div class="mem-group"><div class="mem-head"><b>${esc(d?.title || 'רגעים')}</b><span class="muted small">${esc(fmtDate(d?.date_on || ms[0].taken_on))}${d?.feeling ? ' ' + FEEL[d.feeling].em : ''}</span></div>
+        <div class="mem-grid">${ms.map((m) => `<button data-act="view-mem" data-id="${m.id}">${mediaTag(m)}</button>`).join('')}</div></div>`;
+    }
+  }
+  return html;
+}
+
+document.addEventListener('change', (e) => {
+  const sel = e.target.closest('[data-album-date]'); if (!sel) return;
+  S.albumDate = sel.value ? Number(sel.value) : null;
+});
+
+async function setFreq(f) {
+  S.settings.movie_freq = f; render();
+  await sb.from('settings').upsert({ key: 'movie_freq', value: f });
+}
+
+async function startMovie(key) {
+  const p = periods().find((x) => x.key === key); if (!p) return;
+  const items = [...p.items].sort((a, b) => (a.taken_on + a.created_at).localeCompare(b.taken_on + b.created_at)).slice(0, 20);
+  S.busy = true;
+  openSheet(`
+    <h2>יוצרים לכם סרטון ✨</h2>
+    <p class="muted" style="margin-top:-8px">השאירו את המסך פתוח, זה לוקח בערך דקה. המוזיקה תתנגן בזמן היצירה.</p>
+    <div class="movie-preview"><canvas id="movie-canvas"></canvas></div>
+    <div class="progress"><span id="movie-prog"></span></div>`, () => {});
+  try {
+    await ensureUrls(items.map((m) => m.path));
+    const local = [];
+    for (const m of items) {
+      try {
+        const r = await fetch(urlOf(m.path)); const b = await r.blob();
+        const d = S.dates.find((x) => x.id === m.date_id);
+        local.push({
+          url: URL.createObjectURL(b), kind: m.kind,
+          line1: d?.title || m.caption || '',
+          line2: [fmtDate(d?.date_on || m.taken_on), d?.place].filter(Boolean).join(', '),
+        });
+      } catch {}
+    }
+    const title = periodTitle(key);
+    const { blob, mime } = await makeMovie(local, {
+      title, subtitle: 'טל ואילת', coupleUrl: COUPLE, canvas: $('#movie-canvas'),
+      onProgress: (x) => { const el = $('#movie-prog'); if (el) el.style.width = Math.round(x * 100) + '%'; },
+    });
+    local.forEach((l) => URL.revokeObjectURL(l.url));
+    const ext = mime.includes('mp4') ? 'mp4' : 'webm';
+    const path = `movies/${key}-${Date.now()}.${ext}`;
+    const up = await sb.storage.from(BUCKET).upload(path, blob, { contentType: mime });
+    if (up.error) throw up.error;
+    const { data } = await sb.from('movies').insert({ period: key, title, path, mime, profile: S.me }).select().single();
+    if (data) S.movies.unshift(data);
+    await sendMessage({ body: `🎬 הסרטון "${title}" מוכן באלבום ♥` });
+    S.busy = false; closeSheet(); render(); toast('הסרטון מוכן ♥');
+  } catch (err) {
+    S.busy = false; closeSheet(); render();
+    toast(String(err?.message) === 'no-recorder' ? 'המכשיר הזה לא תומך ביצירת סרטון' : 'יצירת הסרטון נכשלה, נסו שוב');
+  }
+}
+
+async function shareMovie(id) {
+  const mv = S.movies.find((x) => x.id === id); if (!mv) return;
+  await ensureUrls([mv.path]);
+  const url = urlOf(mv.path);
+  try {
+    const b = await (await fetch(url)).blob();
+    const file = new File([b], `${mv.title}.${mv.path.split('.').pop()}`, { type: mv.mime || b.type });
+    if (navigator.canShare?.({ files: [file] })) return await navigator.share({ files: [file], title: mv.title });
+  } catch (e) { if (e?.name === 'AbortError') return; }
+  window.open(url, '_blank');
 }

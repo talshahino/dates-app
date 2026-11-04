@@ -47,6 +47,7 @@ create table if not exists public.dates (
   surprise_by text check (surprise_by in ('tal','eilat')),
   revealed    boolean not null default false,
   rating      smallint check (rating between 1 and 5),
+  feeling     text check (feeling in ('perfect','enjoyed','nice','meh')),
   created_by  text check (created_by in ('tal','eilat')),
   created_at  timestamptz not null default now()
 );
@@ -59,6 +60,37 @@ create table if not exists public.date_notes (
   body       text not null,
   created_at timestamptz not null default now()
 );
+
+-- זיכרונות: תמונות וסרטונים מהדייטים
+create table if not exists public.memories (
+  id         bigint generated always as identity primary key,
+  date_id    bigint references public.dates(id) on delete set null,
+  profile    text not null check (profile in ('tal','eilat')),
+  kind       text not null check (kind in ('image','video')),
+  path       text not null,
+  thumb_path text,
+  caption    text,
+  taken_on   date not null default current_date,
+  created_at timestamptz not null default now()
+);
+
+-- סרטוני אהבה שנוצרו
+create table if not exists public.movies (
+  id         bigint generated always as identity primary key,
+  period     text not null,          -- למשל: date-12, week-2026-11-02, month-2026-11, day-2026-11-04
+  title      text not null,
+  path       text not null,
+  mime       text,
+  profile    text check (profile in ('tal','eilat')),
+  created_at timestamptz not null default now()
+);
+
+-- הגדרות משותפות (למשל: כל כמה זמן סרטון)
+create table if not exists public.settings (
+  key   text primary key,
+  value text
+);
+insert into public.settings (key, value) values ('movie_freq', 'week') on conflict do nothing;
 
 -- מנויי התראות (ישמש בשלב 3)
 create table if not exists public.push_subscriptions (
@@ -78,12 +110,15 @@ alter table public.votes              enable row level security;
 alter table public.messages           enable row level security;
 alter table public.dates              enable row level security;
 alter table public.date_notes         enable row level security;
+alter table public.memories           enable row level security;
+alter table public.movies             enable row level security;
+alter table public.settings           enable row level security;
 alter table public.push_subscriptions enable row level security;
 
 do $$
 declare t text;
 begin
-  foreach t in array array['ideas','votes','messages','dates','date_notes','push_subscriptions'] loop
+  foreach t in array array['ideas','votes','messages','dates','date_notes','memories','movies','settings','push_subscriptions'] loop
     execute format('drop policy if exists couple_all on public.%I', t);
     execute format('create policy couple_all on public.%I for all to authenticated using (true) with check (true)', t);
   end loop;
@@ -93,13 +128,24 @@ end $$;
 do $$
 declare t text;
 begin
-  foreach t in array array['messages','votes','dates','date_notes','ideas'] loop
+  foreach t in array array['messages','votes','dates','date_notes','ideas','memories','movies','settings'] loop
     begin
       execute format('alter publication supabase_realtime add table public.%I', t);
     exception when duplicate_object then null;
     end;
   end loop;
 end $$;
+
+-- ------------------------------------------------------------
+-- אחסון תמונות וסרטונים (פרטי, רק לשניכם)
+-- ------------------------------------------------------------
+insert into storage.buckets (id, name, public, file_size_limit)
+values ('memories', 'memories', false, 52428800)
+on conflict (id) do nothing;
+
+drop policy if exists couple_memories on storage.objects;
+create policy couple_memories on storage.objects for all to authenticated
+  using (bucket_id = 'memories') with check (bucket_id = 'memories');
 
 -- ------------------------------------------------------------
 -- מאגר רעיונות התחלתי (פינוק, 500–600 ₪ לשבוע)
