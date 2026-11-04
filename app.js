@@ -875,7 +875,7 @@ function openSettings() {
     <div class="card" style="box-shadow:none;border:2px solid var(--line)">
       <b>🔔 התראות</b>
       <p class="muted small" style="margin:2px 0 10px">${{ on: 'פעילות במכשיר הזה ✓', off: 'כבויות במכשיר הזה', denied: 'נחסמו. אפשר להפעיל מחדש בהגדרות הטלפון, תחת האפליקציה.', 'ios-install': 'באייפון ההתראות עובדות רק מהאייקון במסך הבית.', unsupported: 'המכשיר הזה לא תומך בהתראות.' }[pushState()]}</p>
-      ${pushState() === 'off' || pushState() === 'ios-install' ? '<button class="btn small violet" data-push>הפעלה</button>' : ''}
+      ${pushState() === 'off' || pushState() === 'ios-install' ? '<button class="btn small violet" data-push>הפעלה</button>' : pushState() === 'on' ? '<button class="btn small ghost" data-push>הפעלה מחדש במכשיר הזה</button>' : ''}
     </div>
     <div class="btns">
       <button class="btn ghost" data-switch>החלפה ל${esc(nameOf(partner()))}</button>
@@ -1295,6 +1295,7 @@ async function enablePush() {
   }
   if (st === 'unsupported') return toast('המכשיר הזה לא תומך בהתראות');
   if (st === 'denied') return toast('ההתראות חסומות. אפשר להפעיל בהגדרות הטלפון');
+  lsDel('dates-push');
   const perm = await Notification.requestPermission();
   if (perm !== 'granted') return toast('בלי אישור לא נוכל לשלוח תזכורות');
   try {
