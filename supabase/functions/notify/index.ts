@@ -27,18 +27,25 @@ async function once(key: string) {
   return !error;
 }
 
+const report: unknown[] = []; // what happened to each push, returned to the caller
+
 async function send(to: P[], msg: { title: string; body: string; url?: string; tag?: string }) {
-  const { data: subs } = await sb.from('push_subscriptions').select('*').in('profile', to);
+  const { data: subs, error } = await sb.from('push_subscriptions').select('*').in('profile', to);
+  if (error) report.push({ db_error: error.message });
   await Promise.all((subs || []).map(async (s) => {
+    const host = new URL(s.endpoint).host;
     try {
-      await webpush.sendNotification(
+      const r = await webpush.sendNotification(
         { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } },
         JSON.stringify(msg),
         { TTL: 6 * 3600, urgency: 'high' },
       );
+      report.push({ to: s.profile, host, status: r.statusCode });
     } catch (e) {
-      const code = (e as { statusCode?: number }).statusCode;
-      if (code === 404 || code === 410) await sb.from('push_subscriptions').delete().eq('id', s.id);
+      const err = e as { statusCode?: number; body?: string; message?: string };
+      report.push({ to: s.profile, host, status: err.statusCode ?? 'error', detail: (err.body || err.message || '').slice(0, 160) });
+      console.error('push failed', s.profile, host, err.statusCode, err.body || err.message);
+      if (err.statusCode === 404 || err.statusCode === 410) await sb.from('push_subscriptions').delete().eq('id', s.id);
     }
   }));
 }
@@ -164,14 +171,15 @@ Deno.serve(async (req) => {
     return new Response('unauthorized', { status: 401 });
   }
   webpush.setVapidDetails('mailto:hello@datesapp.com', sec.vapid_public, sec.vapid_private);
+  report.length = 0;
   const p = await req.json().catch(() => ({}));
   try {
     if (p.type === 'event') await onEvent(p.table, p.op, p.record || {});
     else if (p.type === 'cron') await onCron();
     else if (p.type === 'test') await send(BOTH, { title: '🔔 בדיקה', body: 'ההתראות עובדות ♥', url: './' });
-    return new Response('ok');
+    return new Response(JSON.stringify({ ok: true, type: p.type, report }), { headers: { 'Content-Type': 'application/json' } });
   } catch (e) {
     console.error(e);
-    return new Response('error', { status: 500 });
+    return new Response(JSON.stringify({ ok: false, error: String(e), report }), { status: 500 });
   }
 });
