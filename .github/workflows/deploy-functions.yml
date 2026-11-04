@@ -20,7 +20,7 @@ jobs:
         if: env.SUPABASE_ACCESS_TOKEN != ''
         run: |
           set +e
-          supabase functions deploy notify --project-ref rbupwfcqodfgqmiugmsj --no-verify-jwt --use-api > out.txt 2>&1
+          supabase functions deploy notify --project-ref rbupwfcqodfgqmiugmsj --no-verify-jwt --use-api --yes > out.txt 2>&1
           code=$?
           cat out.txt
           msg=$(tail -n 25 out.txt | sed 's/%/%25/g' | sed 's/sbp_[A-Za-z0-9]*/sbp_***/g' | awk '{printf "%s%%0A", $0}')
