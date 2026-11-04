@@ -18,7 +18,14 @@ jobs:
           version: latest
       - name: Deploy notify
         if: env.SUPABASE_ACCESS_TOKEN != ''
-        run: supabase functions deploy notify --project-ref rbupwfcqodfgqmiugmsj --no-verify-jwt --use-api
+        run: |
+          set +e
+          supabase functions deploy notify --project-ref rbupwfcqodfgqmiugmsj --no-verify-jwt --use-api > out.txt 2>&1
+          code=$?
+          cat out.txt
+          msg=$(tail -n 25 out.txt | sed 's/%/%25/g' | sed 's/sbp_[A-Za-z0-9]*/sbp_***/g' | awk '{printf "%s%%0A", $0}')
+          if [ $code -ne 0 ]; then echo "::error title=deploy::$msg"; else echo "::notice title=deploy::$msg"; fi
+          exit $code
       - name: Waiting for the access token
         if: env.SUPABASE_ACCESS_TOKEN == ''
         run: echo "Add SUPABASE_ACCESS_TOKEN in the repo secrets, then run this workflow again."
