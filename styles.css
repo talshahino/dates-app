@@ -309,7 +309,9 @@ main { flex: 1; padding: 4px 16px calc(104px + var(--safe-bottom)); max-width: 6
 .msg.me { align-self: flex-start; background: var(--violet); color: #fff; border-end-start-radius: 6px; }
 .msg.them { align-self: flex-end; background: var(--surface); box-shadow: var(--shadow); border-end-end-radius: 6px; }
 .msg .attached { margin-top: 8px; border-radius: 16px; overflow: hidden; background: var(--surface); color: var(--ink); }
-.msg .attached .strip { background: var(--cat); padding: 8px 12px; font-size: 22px; }
+.msg .attached .strip { background: var(--cat); height: 96px; position: relative; overflow: hidden; }
+.msg .attached .scene .main { font-size: 46px; }
+.msg .attached .scene .pt { font-size: 18px; }
 .msg .attached .in { padding: 8px 12px 10px; }
 .msg .attached b { display: block; }
 .msg .attached button { margin-top: 6px; margin-inline-end: 10px; font-size: 13px; font-weight: 700; color: var(--violet); }

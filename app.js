@@ -170,7 +170,7 @@ async function loadAll() {
   S.ideas = ideas.data || [];
   S.votes = votes.data || [];
   S.dates = dates.data || [];
-  S.messages = (msgs.data || []).reverse();
+  S.messages = (msgs.data || []).sort((a, b) => a.created_at.localeCompare(b.created_at));
   S.notes = notes.data || [];
   S.memories = mems.data || [];
   S.movies = movies.data || [];
@@ -218,7 +218,7 @@ function subscribe() {
 
 function computeUnread() {
   if (S.tab === 'chat') {
-    const last = S.messages.at(-1);
+    const last = S.messages.reduce((a, m) => (m.id > (a?.id ?? 0) ? m : a), null);
     if (last) { S.lastSeenMsg = last.id; lsSet('dates-last-seen', String(last.id)); }
   }
   S.unread = S.messages.filter((m) => m.id > S.lastSeenMsg && m.profile !== S.me).length;
@@ -505,7 +505,7 @@ function viewChat() {
     const idea = m.idea_id ? ideaById(m.idea_id) : null;
     const time = new Date(m.created_at).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
     html += `<div class="msg ${m.profile === S.me ? 'me' : 'them'}"><span class="body">${esc(m.body || '')}</span>${idea ? `
-      <div class="attached cat-${idea.category}"><div class="strip">${CAT[idea.category]?.em ?? ''}</div><div class="in">
+      <div class="attached cat-${idea.category}"><div class="strip">${sceneHtml(idea)}</div><div class="in">
         <b>${esc(idea.title)}</b><span class="small muted">${DUR[idea.duration] ?? ''}, כ-${idea.cost} ₪</span>
         <div><button data-act="schedule" data-id="${idea.id}">📅 קבעו דייט</button>${voteOf(idea.id, S.me) !== 1 ? `<button data-act="vote-id" data-id="${idea.id}" data-v="1">♥ אהבתי</button>` : ''}</div>
       </div></div>` : ''}<span class="meta">${time}</span></div>`;
