@@ -595,3 +595,9 @@ main { overflow-x: clip; }
 .react-row { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin-bottom: 8px; }
 .react-row button { font-size: 34px; padding: 10px 0; border-radius: 16px; background: var(--surface-2); }
 .react-row button:active { transform: scale(1.2); }
+
+/* ---------- notifications ---------- */
+.card.notif-ask { display: flex; gap: 12px; align-items: flex-start; background: color-mix(in srgb, var(--violet) 10%, var(--surface)); }
+.card.notif-ask .bell { font-size: 32px; animation: ring 2.6s ease-in-out infinite; transform-origin: 50% 10%; }
+@keyframes ring { 0%, 70%, 100% { transform: rotate(0); } 75% { transform: rotate(14deg); } 80% { transform: rotate(-12deg); } 85% { transform: rotate(8deg); } 90% { transform: rotate(-4deg); } }
+.steps { padding-inline-start: 22px; margin: 0 0 12px; display: grid; gap: 8px; font-size: 16px; }

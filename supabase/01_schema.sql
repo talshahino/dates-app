@@ -140,6 +140,49 @@ begin
 end $$;
 
 -- ------------------------------------------------------------
+-- התראות: סודות (נקראים רק בשרת), יומן כפילויות, טריגרים ותזמון
+-- ------------------------------------------------------------
+create table if not exists public.app_secrets (key text primary key, value text not null);
+alter table public.app_secrets enable row level security;   -- בלי הרשאות: רק השרת קורא
+
+create table if not exists public.notify_log (key text primary key, created_at timestamptz not null default now());
+alter table public.notify_log enable row level security;
+
+create extension if not exists pg_net with schema extensions;
+create extension if not exists pg_cron;
+
+create or replace function public.notify_call(payload jsonb) returns void
+language plpgsql security definer set search_path = public, extensions as $$
+declare s text;
+begin
+  select value into s from public.app_secrets where key = 'notify_secret';
+  if s is null then return; end if;
+  perform net.http_post(
+    url     := 'https://rbupwfcqodfgqmiugmsj.supabase.co/functions/v1/notify',
+    body    := payload,
+    headers := jsonb_build_object('Content-Type', 'application/json', 'x-notify-secret', s)
+  );
+end $$;
+revoke execute on function public.notify_call(jsonb) from public, anon, authenticated;
+
+create or replace function public.notify_row() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  perform public.notify_call(jsonb_build_object('type', 'event', 'table', TG_TABLE_NAME, 'op', TG_OP, 'record', to_jsonb(NEW)));
+  return NEW;
+end $$;
+
+drop trigger if exists notify_messages on public.messages;
+create trigger notify_messages after insert on public.messages for each row execute function public.notify_row();
+drop trigger if exists notify_votes on public.votes;
+create trigger notify_votes after insert or update on public.votes for each row execute function public.notify_row();
+drop trigger if exists notify_notes on public.date_notes;
+create trigger notify_notes after insert on public.date_notes for each row execute function public.notify_row();
+
+select cron.unschedule(jobid) from cron.job where jobname = 'dates-notify-hourly';
+select cron.schedule('dates-notify-hourly', '0 * * * *', $$ select public.notify_call('{"type":"cron"}'::jsonb) $$);
+
+-- ------------------------------------------------------------
 -- אחסון תמונות וסרטונים (פרטי, רק לשניכם)
 -- ------------------------------------------------------------
 insert into storage.buckets (id, name, public, file_size_limit)

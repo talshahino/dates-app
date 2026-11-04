@@ -1,5 +1,5 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
-import { SUPABASE_URL, SUPABASE_KEY, COUPLE_EMAIL, PROFILES } from './config.js';
+import { SUPABASE_URL, SUPABASE_KEY, COUPLE_EMAIL, PROFILES, VAPID_PUBLIC } from './config.js';
 import { sceneHtml, DEFAULT_ART } from './scenes.js';
 import { makeMovie, pickMime } from './movie.js';
 
@@ -153,6 +153,7 @@ async function startApp() {
   await loadAll();
   subscribe();
   render();
+  syncPush();
   document.addEventListener('visibilitychange', () => { if (!document.hidden) loadAll().then(render); });
 }
 
@@ -331,6 +332,12 @@ function viewHome() {
     html += `<div class="card"><h3 style="font-size:21px">עוד לא קבעתם דייט השבוע</h3>
       <p class="muted" style="margin:6px 0 14px">מגרילים רעיון, כל אחד מצביע, וכשיש התאמה קובעים.</p>
       <button class="btn" data-act="goto" data-tab="vote">🎲 להגריל רעיון</button></div>`;
+  }
+
+  if (pushState() === 'off' || pushState() === 'ios-install') {
+    html += `<div class="card notif-ask"><span class="bell">🔔</span><div><b>להפעיל התראות?</b>
+      <p class="muted small" style="margin:2px 0 10px">תזכורת בבוקר הדייט, הודעות מ${esc(nameOf(partner()))} וסרטון השבוע, גם כשהאפליקציה סגורה.</p>
+      <button class="btn small violet" data-act="push-on">הפעלה</button></div></div>`;
   }
 
   for (const d of awaitingFeedback()) {
@@ -702,6 +709,7 @@ async function onMainClick(e) {
     case 'camera': pickMedia({ dateId: S.albumDate, camera: true }); break;
     case 'gallery': pickMedia({ dateId: S.albumDate, camera: false }); break;
     case 'view-mem': openViewer(id); break;
+    case 'push-on': await enablePush(); break;
     case 'chat-img': openSheet(`<div class="viewer"><img data-path="${esc(b.dataset.path)}" alt=""></div><div class="btns"><button class="btn" data-close>סגירה</button></div>`, () => hydrateMedia()); break;
     case 'freq': await setFreq(b.dataset.f); break;
     case 'make-movie': await startMovie(b.dataset.period); break;
@@ -864,13 +872,19 @@ function openSettings() {
   openSheet(`
     <h2>הגדרות</h2>
     <p class="muted" style="margin-top:-6px">מחובר/ת כ${esc(nameOf(S.me))}</p>
+    <div class="card" style="box-shadow:none;border:2px solid var(--line)">
+      <b>🔔 התראות</b>
+      <p class="muted small" style="margin:2px 0 10px">${{ on: 'פעילות במכשיר הזה ✓', off: 'כבויות במכשיר הזה', denied: 'נחסמו. אפשר להפעיל מחדש בהגדרות הטלפון, תחת האפליקציה.', 'ios-install': 'באייפון ההתראות עובדות רק מהאייקון במסך הבית.', unsupported: 'המכשיר הזה לא תומך בהתראות.' }[pushState()]}</p>
+      ${pushState() === 'off' || pushState() === 'ios-install' ? '<button class="btn small violet" data-push>הפעלה</button>' : ''}
+    </div>
     <div class="btns">
       <button class="btn ghost" data-switch>החלפה ל${esc(nameOf(partner()))}</button>
       <button class="btn ghost" data-logout>יציאה מהאפליקציה</button>
       <button class="btn" data-close>סגירה</button>
     </div>`, (sheet) => {
+    sheet.querySelector('[data-push]')?.addEventListener('click', async () => { closeSheet(); await enablePush(); });
     sheet.querySelector('[data-switch]').addEventListener('click', () => {
-      S.me = partner(); lsSet('dates-profile', S.me); closeSheet(); computeUnread(); render();
+      S.me = partner(); lsSet('dates-profile', S.me); closeSheet(); computeUnread(); render(); syncPush();
     });
     sheet.querySelector('[data-logout]').addEventListener('click', async () => {
       await sb.auth.signOut(); lsDel('dates-profile'); S.me = null; closeSheet(); renderLogin();
@@ -1236,4 +1250,72 @@ async function shareMovie(id) {
     if (navigator.canShare?.({ files: [file] })) return await navigator.share({ files: [file], title: mv.title });
   } catch (e) { if (e?.name === 'AbortError') return; }
   window.open(url, '_blank');
+}
+
+
+// ============================================================
+// Push notifications
+// ============================================================
+const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isStandalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+
+function pushState() {
+  if (isIOS && !isStandalone) return 'ios-install';
+  if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) return 'unsupported';
+  if (Notification.permission === 'denied') return 'denied';
+  if (Notification.permission === 'granted' && lsGet('dates-push') === '1') return 'on';
+  return 'off';
+}
+
+function b64ToBytes(b64) {
+  const pad = '='.repeat((4 - (b64.length % 4)) % 4);
+  const raw = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+}
+
+async function saveSubscription(sub) {
+  const j = sub.toJSON();
+  const { error } = await sb.from('push_subscriptions')
+    .upsert({ profile: S.me, endpoint: j.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth }, { onConflict: 'endpoint' });
+  return !error;
+}
+
+async function enablePush() {
+  const st = pushState();
+  if (st === 'ios-install') {
+    return openSheet(`
+      <h2>התראות באייפון</h2>
+      <ol class="steps">
+        <li>פותחים את האפליקציה ב<b>ספארי</b>.</li>
+        <li>לוחצים על כפתור השיתוף <b>⬆️</b> בתחתית המסך.</li>
+        <li>בוחרים <b>הוספה למסך הבית</b>, ואז <b>הוסף</b>.</li>
+        <li>פותחים את האפליקציה מהאייקון החדש ולוחצים שוב על <b>הפעלת התראות</b>.</li>
+      </ol>
+      <div class="btns"><button class="btn" data-close>הבנתי</button></div>`);
+  }
+  if (st === 'unsupported') return toast('המכשיר הזה לא תומך בהתראות');
+  if (st === 'denied') return toast('ההתראות חסומות. אפשר להפעיל בהגדרות הטלפון');
+  const perm = await Notification.requestPermission();
+  if (perm !== 'granted') return toast('בלי אישור לא נוכל לשלוח תזכורות');
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = (await reg.pushManager.getSubscription()) ||
+      (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(VAPID_PUBLIC) }));
+    if (!(await saveSubscription(sub))) throw new Error('save');
+    lsSet('dates-push', '1');
+    toast('🔔 ההתראות הופעלו');
+    render();
+  } catch {
+    toast('ההפעלה לא הצליחה, נסו שוב');
+  }
+}
+
+// make sure this device's subscription belongs to whoever is using it now
+async function syncPush() {
+  if (pushState() !== 'on') return;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if (sub) await saveSubscription(sub); else lsDel('dates-push');
+  } catch {}
 }
