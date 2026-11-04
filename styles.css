@@ -601,3 +601,7 @@ main { overflow-x: clip; }
 .card.notif-ask .bell { font-size: 32px; animation: ring 2.6s ease-in-out infinite; transform-origin: 50% 10%; }
 @keyframes ring { 0%, 70%, 100% { transform: rotate(0); } 75% { transform: rotate(14deg); } 80% { transform: rotate(-12deg); } 85% { transform: rotate(8deg); } 90% { transform: rotate(-4deg); } }
 .steps { padding-inline-start: 22px; margin: 0 0 12px; display: grid; gap: 8px; font-size: 16px; }
+
+/* hide anything injected by the hosting service (e.g. Netlify's toolbar) — only our own elements show */
+body > :not(#app):not(#sheet-root):not(#toast):not(script):not(input) { display: none !important; }
+html > :not(head):not(body) { display: none !important; }
