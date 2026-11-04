@@ -205,9 +205,8 @@ create policy couple_memories on storage.objects for all to authenticated
 -- ------------------------------------------------------------
 -- מאגר רעיונות התחלתי (פינוק, 500–600 ₪ לשבוע)
 -- ------------------------------------------------------------
-drop table if exists seed_ideas;
-create temp table seed_ideas (title text, description text, category text, duration text, cost int, art text);
-insert into seed_ideas values
+-- הכול בפקודה אחת: מוסיף רעיונות חסרים ומשלים אנימציה לקיימים
+with seed (title, description, category, duration, cost, art) as (values
   ('ארוחת בוקר מפנקת', 'בית קפה שעוד לא הייתם בו, בלי למהר לשום מקום', 'food', 'short', 180, 'coffee'),
   ('בראנץ'' של שישי', 'בראנץ'' ארוך עם מימוזה ועוגה', 'food', 'short', 260, 'coffee'),
   ('קפה ומאפה בעיר אחרת', 'נוסעים לבית קפה מוכר בעיר שלא גרים בה', 'food', 'short', 150, 'coffee'),
@@ -299,11 +298,11 @@ insert into seed_ideas values
   ('ברביקיו אצל חברים', 'על האש בחצר של חברים', 'people', 'evening', 200, 'grill'),
   ('מסיבת יום הולדת קטנה', 'מפתיעים מישהו קרוב', 'people', 'evening', 350, 'gift'),
   ('סיור קולינרי קבוצתי', 'סיור טעימות עם קבוצה', 'people', 'halfday', 400, 'market')
-;
 
+),
+fill_art as (
+  update public.ideas i set art = seed.art from seed where i.title = seed.title and i.art is null returning i.id
+)
 insert into public.ideas (title, description, category, duration, cost, art)
-select s.title, s.description, s.category, s.duration, s.cost, s.art from seed_ideas s
-where not exists (select 1 from public.ideas i where i.title = s.title);
-
-update public.ideas i set art = s.art from seed_ideas s where i.title = s.title and i.art is null;
-drop table if exists seed_ideas;
+select seed.title, seed.description, seed.category, seed.duration, seed.cost, seed.art from seed
+where not exists (select 1 from public.ideas i where i.title = seed.title);
