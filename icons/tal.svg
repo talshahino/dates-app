@@ -6,8 +6,9 @@
     <ellipse cx="106" cy="99" rx="4" ry="6" fill="#DFA987"/>
     <ellipse cx="158" cy="99" rx="4" ry="6" fill="#DFA987"/>
     <path d="M106 90 C104 64 118 56 132 56 C148 56 162 64 158 90 C156 80 150 74 140 74 C128 76 118 72 112 76 C108 80 107 85 106 90 Z" fill="#1C1824"/>
-    <path d="M107 100 C108 118 118 128 132 128 C146 128 156 118 157 100 C153 110 148 112 142 111 C138 109 126 109 122 111 C116 112 111 110 107 100 Z" fill="#1C1824"/>
-    <path d="M124 114 Q132 120 140 114" fill="none" stroke="#F3E6EC" stroke-width="3" stroke-linecap="round"/>
+    <path d="M107 100 C108 118 118 128 132 128 C146 128 156 118 157 100 C153 110 148 112 142 111 C138 109 126 109 122 111 C116 112 111 110 107 100 Z" fill="#2A2230" opacity=".32"/>
+    <path d="M122 110 Q132 106 142 110 Q132 113 122 110 Z" fill="#2A2230" opacity=".35"/>
+    <path d="M124 114 Q132 120 140 114" fill="none" stroke="#8C3B45" stroke-width="3" stroke-linecap="round"/>
     <path d="M115 88 Q122 84 128 88" fill="none" stroke="#1C1824" stroke-width="3" stroke-linecap="round"/>
     <path d="M136 88 Q142 84 149 88" fill="none" stroke="#1C1824" stroke-width="3" stroke-linecap="round"/>
     <ellipse cx="122" cy="97" rx="3.2" ry="4" fill="#1C1824"/>

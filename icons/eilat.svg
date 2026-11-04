@@ -2,18 +2,24 @@
   <g id="eilat">
     <path d="M30 200 C30 160 50 142 76 142 C102 142 120 160 120 200 Z" fill="#FF4F7B"/>
     <rect x="68" y="122" width="16" height="22" rx="7" fill="#F6D2BC"/>
-    <g fill="#F4C443">
+    <g fill="#DDB06A">
       <circle cx="46" cy="104" r="15"/><circle cx="44" cy="124" r="13"/><circle cx="52" cy="140" r="11"/>
       <circle cx="104" cy="104" r="15"/><circle cx="106" cy="124" r="13"/><circle cx="98" cy="140" r="11"/>
       <circle cx="52" cy="80" r="16"/><circle cx="98" cy="80" r="16"/>
     </g>
     <ellipse cx="75" cy="102" rx="25" ry="28" fill="#FBDECB"/>
-    <g fill="#F4C443">
+    <g fill="#DDB06A">
       <circle cx="58" cy="72" r="15"/><circle cx="75" cy="66" r="16"/><circle cx="92" cy="72" r="15"/>
       <circle cx="64" cy="80" r="9"/><circle cx="86" cy="80" r="9"/>
     </g>
-    <g fill="#E3A62C" opacity=".55">
-      <circle cx="70" cy="62" r="5"/><circle cx="90" cy="68" r="4"/><circle cx="50" cy="96" r="4"/><circle cx="102" cy="118" r="4"/>
+    <g fill="none" stroke-linecap="round">
+      <g stroke="#A97A3F" stroke-width="3" opacity=".55">
+        <path d="M42 112 Q38 124 46 134"/><path d="M108 112 Q112 124 104 134"/><path d="M50 136 Q48 144 56 148"/><path d="M100 136 Q102 144 94 148"/>
+      </g>
+      <g stroke="#FAEBC0" stroke-width="3.2">
+        <path d="M62 64 Q68 58 76 60"/><path d="M82 62 Q90 62 94 70"/><path d="M50 74 Q54 68 60 70"/>
+        <path d="M40 98 Q38 108 44 116"/><path d="M110 98 Q112 108 106 116"/><path d="M46 122 Q44 128 48 132"/><path d="M104 122 Q106 128 102 132"/>
+      </g>
     </g>
     <ellipse cx="66" cy="102" rx="3.2" ry="4" fill="#2A1E3D"/>
     <ellipse cx="84" cy="102" rx="3.2" ry="4" fill="#2A1E3D"/>
