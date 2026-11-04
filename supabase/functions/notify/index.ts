@@ -1,3 +1,4 @@
+// deployed automatically by GitHub Actions
 // ============================================================
 // notify — sends push notifications to טל and אילת.
 // Called by database triggers (new message, match, note) and
