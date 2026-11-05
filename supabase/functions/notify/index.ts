@@ -8,6 +8,10 @@
 // ============================================================
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import webpush from 'npm:web-push@3.6.7';
+import { weekKeyOf, weeklySlot, weeklyGesture } from '../_shared/love.js';
+
+declare const EdgeRuntime: { waitUntil(p: Promise<unknown>): void };
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
 
@@ -67,6 +71,24 @@ function addDays(day: string, n: number) {
 const hhmm = (t?: string | null) => (t ? t.slice(0, 5) : '');
 
 // ---------- events from the database ----------
+async function likesDigest(from: P) {
+  await sleep(45_000); // wait a little so a burst of likes becomes one notification
+  const to = PARTNER[from];
+  const since = new Date(Date.now() - 4 * 60_000).toISOString();
+  const { data: likes } = await sb.from('votes').select('idea_id, updated_at').eq('profile', from).eq('value', 1).gte('updated_at', since);
+  if (!likes?.length) return;
+  const { data: theirs } = await sb.from('votes').select('idea_id').eq('profile', to).in('idea_id', likes.map((l) => l.idea_id));
+  const voted = new Set((theirs || []).map((t) => t.idea_id));
+  const fresh: number[] = [];
+  for (const l of likes) if (!voted.has(l.idea_id) && (await once(`like-${from}-${l.idea_id}`))) fresh.push(l.idea_id);
+  if (!fresh.length) return;
+  const { data: ideas } = await sb.from('ideas').select('title').in('id', fresh);
+  const titles = (ideas || []).map((i) => i.title);
+  await send([to], fresh.length === 1
+    ? { title: `💜 ${NAME[from]} ${verb(from, 'אהב', 'אהבה')}: ${titles[0]}`, body: 'גם לך מתאים? לחצו כדי לראות', url: './?tab=vote&mode=liked', tag: 'likes' }
+    : { title: `💜 ${NAME[from]} ${verb(from, 'אהב', 'אהבה')} ${fresh.length} רעיונות`, body: titles.join(' · '), url: './?tab=vote&mode=liked', tag: 'likes' });
+}
+
 async function onEvent(table: string, op: string, r: Record<string, unknown>) {
   if (table === 'messages' && op === 'INSERT') {
     const from = r.profile as P;
@@ -79,7 +101,11 @@ async function onEvent(table: string, op: string, r: Record<string, unknown>) {
   if (table === 'votes' && r.value === 1) {
     const other = PARTNER[r.profile as P];
     const { data: v } = await sb.from('votes').select('value').eq('idea_id', r.idea_id).eq('profile', other).maybeSingle();
-    if (v?.value !== 1) return;
+    if (v?.value !== 1) {
+      // not a match yet: tell the partner what was liked, grouped if several come in a row
+      EdgeRuntime.waitUntil(likesDigest(r.profile as P));
+      return;
+    }
     if (!(await once(`match-${r.idea_id}`))) return;
     const { data: idea } = await sb.from('ideas').select('title').eq('id', r.idea_id).single();
     return send(BOTH, { title: '💞 יש לכם התאמה!', body: `שניכם אהבתם: ${idea?.title}. בואו נקבע מתי`, url: './?tab=vote', tag: 'match' });
@@ -149,11 +175,26 @@ async function onCron() {
     }
   }
 
-  // Sunday: nothing planned this week?
-  if (weekday === 'Sun' && hour === 9) {
-    const planned = (dates || []).some((d) => d.date_on >= today && d.date_on <= addDays(today, 6));
-    if (!planned && (await once(`week-${today}`))) {
-      await send(BOTH, { title: '🎲 מה עושים השבוע?', body: 'עוד לא קבעתם דייט. בואו נגריל רעיון ביחד', url: './?tab=vote', tag: 'week' });
+  // once a week, at a random time (not Friday, 9:00-20:00)
+  const DOW: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  const wk = weekKeyOf(today);
+  const isSlot = (salt: string) => { const sl = weeklySlot(wk, salt); return sl.dow === DOW[weekday] && sl.hour === hour; };
+
+  // time to pick an activity, only if nothing is planned for this week yet
+  if (isSlot('picks')) {
+    const planned = (dates || []).some((d) => d.date_on >= wk && d.date_on <= addDays(wk, 6));
+    if (!planned && (await once(`picks-${wk}`))) {
+      await send(BOTH, { title: '🎲 זה הזמן לבחור פעילות לשבוע', body: 'שלושה רעיונות מחכים לכם. מי מתחיל?', url: './?tab=vote&mode=picks', tag: 'picks' });
+    }
+  }
+
+  // the weekly gesture, fitted to what the partner said makes them feel loved
+  if (isSlot('gesture') && (await once(`gesture-${wk}`))) {
+    const { data: profiles } = await sb.from('love_profiles').select('profile, scores');
+    const scores = Object.fromEntries((profiles || []).map((x) => [x.profile, x.scores]));
+    for (const giver of BOTH) {
+      const g = weeklyGesture(wk, giver, scores[PARTNER[giver]] || null, 0);
+      await send([giver], { title: `💌 מחווה לשבוע ל${NAME[PARTNER[giver]]}`, body: g.text, url: './', tag: 'gesture' });
     }
   }
 

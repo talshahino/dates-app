@@ -39,6 +39,13 @@
 .cat-shopping    { --cat: var(--pink); }
 .cat-experiences { --cat: var(--violet); }
 .cat-people      { --cat: var(--sky); }
+.cat-calm        { --cat: #8E7CC3; }
+.cat-sport       { --cat: #2BB673; }
+.cat-nature      { --cat: #4CAF50; }
+.cat-learn       { --cat: #F2A93B; }
+.cat-create      { --cat: #E86FA8; }
+.cat-romantic    { --cat: #E8476A; }
+.cat-closeness   { --cat: #5B8DEF; }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body { margin: 0; height: 100%; }
@@ -221,7 +228,7 @@ main { flex: 1; padding: 4px 16px calc(104px + var(--safe-bottom)); max-width: 6
 
 /* ---------- vote ---------- */
 .seg {
-  display: grid; grid-template-columns: 1fr 1fr; background: var(--surface-2);
+  display: grid; grid-template-columns: 1fr 1fr 1fr; background: var(--surface-2);
   border-radius: 18px; padding: 4px; margin: 4px 0 16px;
 }
 .seg button { padding: 10px; border-radius: 14px; font-weight: 500; color: var(--ink-2); }
@@ -656,3 +663,47 @@ html > :not(head):not(body) { display: none !important; }
   0% { opacity: 1; transform: rotate(var(--a)) translateY(0) rotate(calc(-1 * var(--a))); }
   100% { opacity: 0; transform: rotate(var(--a)) translateY(-170px) rotate(calc(-1 * var(--a))) scale(1.3); }
 }
+
+/* ---------- weekly picks ---------- */
+.pick-card { background: var(--surface); border-radius: 26px; overflow: hidden; box-shadow: var(--shadow); margin-bottom: 14px; }
+.pick-card .small-art { height: 120px; }
+.pick-card .small-art .scene .main { font-size: 62px; }
+.pick-card .small-art .scene .pt { font-size: 22px; }
+.pick-card h3 { font-size: 21px; margin-bottom: 2px; }
+.pick-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+
+/* ---------- love languages ---------- */
+.love-home { margin-top: 14px; }
+.card.gesture { background: color-mix(in srgb, var(--pink) 10%, var(--surface)); border: 2px solid color-mix(in srgb, var(--pink) 35%, transparent); }
+.g-kicker { font-size: 14px; font-weight: 700; color: var(--pink); }
+.g-text { font-size: 17px; margin: 8px 0 12px; line-height: 1.45; }
+.g-em { font-size: 22px; margin-inline-end: 6px; }
+.g-actions { display: flex; gap: 8px; }
+.needs { margin: 2px 0 8px; }
+.n-title { display: block; font-weight: 700; margin: 0 2px 8px; }
+.n-row { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: none; }
+.n-row::-webkit-scrollbar { display: none; }
+.n-row button {
+  flex: none; display: grid; justify-items: center; gap: 2px; min-width: 76px; padding: 10px 8px;
+  border-radius: 18px; background: var(--surface); box-shadow: var(--shadow); font-size: 13px; font-weight: 500;
+}
+.n-row button span { font-size: 26px; line-height: 1.1; }
+.n-row button:active { background: var(--sun); color: #1F1640; }
+.love-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.card.flat { box-shadow: none; border: 2px solid var(--line); padding: 14px; margin-bottom: 10px; }
+.bar-row { display: grid; gap: 3px; margin-top: 8px; font-size: 13px; }
+.bar { height: 8px; border-radius: 4px; background: var(--surface-2); overflow: hidden; }
+.bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--violet), var(--pink)); border-radius: 4px; }
+.hint-line { font-weight: 700; color: var(--violet); margin: 4px 2px 0; }
+.lang-log { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+.lang-log button { display: grid; justify-items: center; gap: 2px; padding: 10px 2px; border-radius: 16px; background: var(--surface-2); font-size: 22px; }
+.lang-log button span { font-size: 11px; font-weight: 500; }
+.quiz h2 { font-size: 22px; margin: 6px 0 16px; }
+.q-progress { height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; margin-bottom: 8px; }
+.q-progress i { display: block; height: 100%; background: var(--violet); }
+.q-opt {
+  display: block; width: 100%; text-align: right; padding: 18px 16px; border-radius: 20px;
+  background: var(--surface); border: 2px solid var(--line); font-size: 17px; font-weight: 500;
+}
+.q-opt:active { border-color: var(--violet); background: color-mix(in srgb, var(--violet) 12%, var(--surface)); }
+.q-or { text-align: center; color: var(--ink-2); font-size: 14px; margin: 8px 0; }

@@ -2,6 +2,7 @@ import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 import { SUPABASE_URL, SUPABASE_KEY, COUPLE_EMAIL, PROFILES, VAPID_PUBLIC } from './config.js';
 import { sceneHtml, DEFAULT_ART } from './scenes.js';
 import { makeMovie, pickMime } from './movie.js';
+import { LANGS, weekKeyOf, weeklyGesture, quizFor, needsFor, NEED_PREFIXES, seeded } from './supabase/functions/_shared/love.js';
 
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, storageKey: 'dates-auth' },
@@ -19,6 +20,8 @@ const S = {
   memories: [],
   movies: [],
   settings: {},
+  love: {},       // profile -> scores
+  loveLog: [],
   urls: {},       // storage path -> signed url
   messages: [],
   currentIdeaId: null,
@@ -33,6 +36,13 @@ const CAT = {
   shopping:    { label: 'קניות',        em: '🛍️' },
   experiences: { label: 'חוויות',       em: '🎭' },
   people:      { label: 'עם חברים',     em: '🥂' },
+  calm:        { label: 'רגוע',         em: '🛋️' },
+  sport:       { label: 'ספורט ביחד',   em: '🚴' },
+  nature:      { label: 'טבע',          em: '🌿' },
+  learn:       { label: 'לומדים ביחד',  em: '🎓' },
+  create:      { label: 'יצירה בבית',   em: '🎨' },
+  romantic:    { label: 'רומנטי',       em: '💕' },
+  closeness:   { label: 'שיחה וקרבה',   em: '💬' },
 };
 const ICON = {
   home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v9.5h13V10"/><path d="M10 19.5v-5h4v5"/></svg>',
@@ -185,6 +195,7 @@ function renderPicker() {
 async function startApp() {
   const params = new URLSearchParams(location.search);
   if (params.get('tab')) S.tab = params.get('tab');
+  if (params.get('mode')) S.voteMode = params.get('mode') === 'liked' ? 'matches' : params.get('mode');
   renderShell();
   await loadAll();
   subscribe();
@@ -194,7 +205,7 @@ async function startApp() {
 }
 
 async function loadAll() {
-  const [ideas, votes, dates, msgs, notes, mems, movies, settings] = await Promise.all([
+  const [ideas, votes, dates, msgs, notes, mems, movies, settings, love, loveLog] = await Promise.all([
     sb.from('ideas').select('*').order('id'),
     sb.from('votes').select('*'),
     sb.from('dates').select('*').order('date_on').order('time_at', { nullsFirst: false }),
@@ -203,9 +214,13 @@ async function loadAll() {
     sb.from('memories').select('*').order('taken_on', { ascending: false }).order('created_at', { ascending: false }),
     sb.from('movies').select('*').order('created_at', { ascending: false }),
     sb.from('settings').select('*'),
+    sb.from('love_profiles').select('*'),
+    sb.from('love_log').select('*').gte('created_at', new Date(Date.now() - 21 * 864e5).toISOString()),
   ]);
   if (ideas.error?.status === 401 || ideas.error?.code === 'PGRST301') { await sb.auth.signOut(); return renderLogin(); }
   S.ideas = ideas.data || [];
+  S.love = Object.fromEntries((love.data || []).map((r) => [r.profile, r.scores]));
+  S.loveLog = loveLog.data || [];
   S.votes = votes.data || [];
   S.dates = dates.data || [];
   S.messages = (msgs.data || []).sort((a, b) => a.created_at.localeCompare(b.created_at));
@@ -246,6 +261,12 @@ function subscribe() {
     })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'movies' }, async () => {
       const { data } = await sb.from('movies').select('*').order('created_at', { ascending: false }); S.movies = data || []; render(true);
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'love_profiles' }, async () => {
+      const { data } = await sb.from('love_profiles').select('*'); S.love = Object.fromEntries((data || []).map((r) => [r.profile, r.scores])); render(true);
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'love_log' }, async () => {
+      const { data } = await sb.from('love_log').select('*').gte('created_at', new Date(Date.now() - 21 * 864e5).toISOString()); S.loveLog = data || []; render(true);
     })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'settings' }, async () => {
       const { data } = await sb.from('settings').select('*'); S.settings = Object.fromEntries((data || []).map((r) => [r.key, r.value])); render(true);
@@ -398,6 +419,8 @@ function viewHome() {
     </button>
   </div>`;
 
+  html += loveHome();
+
   if (next) html += `<h3 class="section-title">הדייט הבא</h3>${dateCard(next)}`;
 
   const mem = memoryOfTheDay();
@@ -429,9 +452,17 @@ function pickRandomIdea(preferPending = false) {
 
 function viewVote() {
   let html = `<div class="seg">
-    <button data-act="vmode" data-mode="random" class="${S.voteMode === 'random' ? 'on' : ''}">🎲 רעיון אקראי</button>
+    <button data-act="vmode" data-mode="picks" class="${S.voteMode === 'picks' ? 'on' : ''}">⭐ השבוע</button>
+    <button data-act="vmode" data-mode="random" class="${S.voteMode === 'random' ? 'on' : ''}">🎲 אקראי</button>
     <button data-act="vmode" data-mode="matches" class="${S.voteMode === 'matches' ? 'on' : ''}">💞 התאמות</button>
   </div>`;
+
+  if (S.voteMode === 'picks') {
+    const picks = weeklyPicks();
+    html += `<p class="muted small" style="margin:-4px 2px 12px">שלושה רעיונות שנבחרו לכם השבוע, לפי מה שאהבתם. כששניכם אוהבים אחד, יש התאמה.</p>`;
+    html += picks.length ? picks.map((i) => pickCard(i)).join('') : `<div class="empty"><span class="ic">⭐</span>אין רעיונות חדשים לבחירה.</div>`;
+    return html;
+  }
 
   if (S.voteMode === 'matches') {
     const matches = S.ideas.filter((i) => isMatch(i.id));
@@ -594,6 +625,10 @@ function quickReplies() {
   const lastAny = S.messages.at(-1);
   if (lastTheirs && lastAny === lastTheirs) {
     if (lastTheirs.idea_id) return ['אהבתי! 😍', g('בוא נקבע 📅', 'בואי נקבע 📅'), 'אולי משהו אחר?', 'מתי?'];
+    if (NEED_PREFIXES.some((x) => (lastTheirs.body || '').startsWith(x))) {
+      const her = partner();
+      return [g4(S.me, 'בדרך אלייך 🤗', 'בדרך אליך 🤗').replace('אלייך', g4(her, 'אליך', 'אלייך')), 'אני כאן בשבילך 💜', `${g4(her, 'ספר', 'ספרי')} לי מה צריך`, `${g4(S.me, 'אוהב', 'אוהבת')} אותך ❤️`];
+    }
     if ((lastTheirs.body || '').startsWith('🎁')) return ['וואו! 😍', g4(S.me, 'אני מת לדעת!', 'אני מתה לדעת!'), 'עוד רמז? 🙏', 'כבר מחכה 🥰'];
     if ((lastTheirs.body || '').startsWith('💡')) return [g4(S.me, 'יש לי ניחוש 🤔', 'יש לי ניחוש 🤔'), 'אני בעננים 😍', 'עוד רמז! 🙏'];
     if ((lastTheirs.body || '').startsWith('🎉')) return ['ידעתי שתאהב/י ❤️'.replace('תאהב/י', g4(partner(), 'תאהב', 'תאהבי')), 'הכי כיף איתך 🥰'];
@@ -765,6 +800,11 @@ async function onMainClick(e) {
     case 'gallery': pickMedia({ dateId: S.albumDate, camera: false }); break;
     case 'view-mem': openViewer(id); break;
     case 'surprise-new': openSurprise({}); break;
+    case 'quiz': openQuiz(); break;
+    case 'love': openLove(); break;
+    case 'need': await sendNeed(b.dataset.key); break;
+    case 'gesture-done': await logLove(b.dataset.lang, 'gesture'); toast('איזה יופי 💜'); break;
+    case 'gesture-other': { const k = `dates-gshuf-${weekKeyOf(todayStr())}`; lsSet(k, String(Number(lsGet(k) || 0) + 1)); render(); break; }
     case 'reveal': revealSurprise(S.dates.find((d) => d.id === id)); break;
     case 'reveal-now': await revealNow(S.dates.find((d) => d.id === id)); break;
     case 'push-on': await enablePush(); break;
@@ -936,11 +976,13 @@ function openSettings() {
       ${pushState() === 'off' || pushState() === 'ios-install' ? '<button class="btn small violet" data-push>הפעלה</button>' : pushState() === 'on' ? '<button class="btn small ghost" data-push>הפעלה מחדש במכשיר הזה</button>' : ''}
     </div>
     <div class="btns">
+      <button class="btn ghost" data-love>💌 שפת האהבה שלנו</button>
       <button class="btn ghost" data-switch>החלפה ל${esc(nameOf(partner()))}</button>
       <button class="btn ghost" data-logout>יציאה מהאפליקציה</button>
       <button class="btn" data-close>סגירה</button>
     </div>`, (sheet) => {
     sheet.querySelector('[data-push]')?.addEventListener('click', async () => { closeSheet(); await enablePush(); });
+    sheet.querySelector('[data-love]').addEventListener('click', () => { closeSheet(); openLove(); });
     sheet.querySelector('[data-switch]').addEventListener('click', () => {
       S.me = partner(); lsSet('dates-profile', S.me); closeSheet(); computeUnread(); render(); syncPush();
     });
@@ -1491,4 +1533,169 @@ function revealSurprise(d) {
       render();
     }
   });
+}
+
+// ============================================================
+// Weekly picks: three ideas for the week, the same for both
+// ============================================================
+function weeklyPicks() {
+  const wk = weekKeyOf(todayStr());
+  const start = new Date(wk + 'T00:00').getTime();
+  const before = (v) => !v.updated_at || new Date(v.updated_at).getTime() < start; // votes from before this week keep the picks stable
+  const old = S.votes.filter(before);
+  const vote = (id, p) => old.find((v) => v.idea_id === id && v.profile === p)?.value ?? 0;
+  const r = seeded(`${wk}|picks`);
+  return S.ideas
+    .filter((i) => vote(i.id, 'tal') !== -1 && vote(i.id, 'eilat') !== -1 && !(vote(i.id, 'tal') === 1 && vote(i.id, 'eilat') === 1))
+    .map((i) => ({ i, score: r() + ((vote(i.id, 'tal') === 1) !== (vote(i.id, 'eilat') === 1) ? 1.2 : 0) }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3)
+    .map((x) => x.i);
+}
+
+function pickCard(i) {
+  const mine = voteOf(i.id, S.me), theirs = voteOf(i.id, partner());
+  const pn = nameOf(partner());
+  const note = isMatch(i.id) ? '💞 יש התאמה!' : theirs === 1 ? `${esc(pn)} ${g4(partner(), 'אהב', 'אהבה')} 💕` : theirs === -1 ? `${esc(pn)} פחות ${g4(partner(), 'התלהב', 'התלהבה')}` : '';
+  return `<div class="pick-card cat-${i.category}">
+    <div class="idea-art small-art">${sceneHtml(i)}<span class="price">כ-${i.cost} ₪</span></div>
+    <div class="idea-body">
+      <h3>${esc(i.title)}</h3>
+      ${i.description ? `<p class="muted small" style="margin:0">${esc(i.description)}</p>` : ''}
+      <div class="chips"><span class="chip cat">${CAT[i.category]?.label ?? ''}</span><span class="chip">${DUR[i.duration] ?? ''}</span></div>
+      ${note ? `<div class="partner-note ${isMatch(i.id) ? 'match' : ''}">${note}</div>` : ''}
+      <div class="pick-actions">
+        <button class="btn small ${mine === -1 ? '' : 'ghost'}" data-act="vote-id" data-id="${i.id}" data-v="-1">✕</button>
+        <button class="btn small ${mine === 1 ? '' : 'ghost'}" data-act="vote-id" data-id="${i.id}" data-v="1">♥ אהבתי</button>
+        <button class="btn small ghost" data-act="to-chat" data-id="${i.id}">💬</button>
+        ${isMatch(i.id) ? `<button class="btn small violet" data-act="schedule" data-id="${i.id}">📅 קבעו</button>` : ''}
+      </div>
+    </div>
+  </div>`;
+}
+
+// ============================================================
+// Love languages ("a balanced diet" of five ways to feel loved)
+// ============================================================
+const thisWeek = () => weekKeyOf(todayStr());
+
+function myGesture() {
+  const wk = thisWeek();
+  return weeklyGesture(wk, S.me, S.love[partner()], Number(lsGet(`dates-gshuf-${wk}`) || 0));
+}
+
+function loveHome() {
+  const P = nameOf(partner());
+  let html = '<div class="love-home">';
+  if (!S.love[S.me]) {
+    html += `<div class="card love-quiz-ask"><b>💌 מה גורם לך להרגיש ${g4(S.me, 'אהוב', 'אהובה')}?</b>
+      <p class="muted small" style="margin:2px 0 10px">עשר שאלות קצרות. לפי התשובות האפליקציה תציע ל${esc(P)} כל שבוע מחווה שמתאימה לך.</p>
+      <button class="btn small violet" data-act="quiz">לשאלון, דקה</button></div>`;
+  }
+  const done = S.loveLog.some((l) => l.profile === S.me && l.kind === 'gesture' && l.week === thisWeek());
+  const g = myGesture();
+  html += `<div class="card gesture">
+    <div class="g-kicker">💌 המחווה של השבוע ל${esc(P)}</div>
+    ${done ? `<p class="g-text">✓ עשית את המחווה של השבוע. ${esc(P)} ${g4(partner(), 'בטח הרגיש', 'בטח הרגישה')} 💜</p>` : `
+    <p class="g-text"><span class="g-em">${LANGS[g.lang].em}</span>${esc(g.text)}</p>
+    <div class="g-actions">
+      <button class="btn small violet" data-act="gesture-done" data-lang="${g.lang}">✓ עשיתי</button>
+      <button class="btn small ghost" data-act="gesture-other">רעיון אחר</button>
+    </div>`}
+  </div>`;
+  html += `<div class="needs"><span class="n-title">מה ${g4(S.me, 'אתה צריך', 'את צריכה')} היום?</span>
+    <div class="n-row">${needsFor(S.me).map((n) => `<button data-act="need" data-key="${n.key}"><span>${n.em}</span>${esc(n.label)}</button>`).join('')}</div>
+  </div>
+  <div class="foot" style="margin:6px 0 4px"><button class="linkish" data-act="love">💌 שפת האהבה שלנו</button></div>`;
+  return html + '</div>';
+}
+
+async function sendNeed(key) {
+  const n = needsFor(S.me).find((x) => x.key === key); if (!n) return;
+  await sendMessage({ body: n.msg });
+  toast(`נשלח ל${nameOf(partner())} 💜`);
+}
+
+async function logLove(lang, kind = 'manual') {
+  const { data, error } = await sb.from('love_log').insert({ profile: S.me, lang, kind, week: thisWeek() }).select().single();
+  if (error) return toast('לא נשמר');
+  S.loveLog.push(data); render();
+}
+
+function scoreBars(scores) {
+  if (!scores) return '<p class="muted small">עוד לא מולא</p>';
+  return Object.entries(LANGS).map(([k, l]) => ({ k, l, v: scores[k] ?? 0 })).sort((a, b) => b.v - a.v)
+    .map(({ l, v }) => `<div class="bar-row"><span class="bl">${l.em} ${l.label}</span><span class="bar"><i style="width:${(v / 4) * 100}%"></i></span></div>`).join('');
+}
+
+function openLove() {
+  const me = S.me, her = partner(), wk = thisWeek();
+  const start = new Date(wk + 'T00:00');
+  const datesDone = S.dates.filter((d) => d.status === 'done' && new Date(d.date_on + 'T12:00') >= start).length;
+  const given = (p) => {
+    const c = Object.fromEntries(Object.keys(LANGS).map((k) => [k, 0]));
+    S.loveLog.filter((l) => l.profile === p && l.week === wk).forEach((l) => { c[l.lang]++; });
+    c.time += datesDone;
+    return c;
+  };
+  const chips = (c) => Object.entries(c).filter(([, v]) => v).map(([k, v]) => `<span class="chip">${LANGS[k].em} ${LANGS[k].label}${v > 1 ? ' ×' + v : ''}</span>`).join('') || '<span class="muted small">עוד כלום, יש זמן 😊</span>';
+  const mine = given(me);
+  const herTop = S.love[her] ? Object.entries(S.love[her]).sort((a, b) => b[1] - a[1]).map(([k]) => k) : [];
+  const missing = herTop.find((k) => !mine[k]);
+  openSheet(`
+    <h2>💌 שפת האהבה שלנו</h2>
+    <p class="muted" style="margin-top:-8px">כולנו צריכים את כל חמש הדרכים, כמו תזונה מאוזנת. כאן רואים מה הכי ממלא כל אחד, ומה נתתם זה לזה השבוע.</p>
+    <div class="love-grid">
+      <div class="card flat"><b>${esc(nameOf(me))}</b>${scoreBars(S.love[me])}</div>
+      <div class="card flat"><b>${esc(nameOf(her))}</b>${scoreBars(S.love[her])}</div>
+    </div>
+    <h3 class="section-title">השבוע נתתם</h3>
+    <div class="card flat"><b>${esc(nameOf(me))} ל${esc(nameOf(her))}</b><div class="chips">${chips(mine)}</div></div>
+    <div class="card flat"><b>${esc(nameOf(her))} ל${esc(nameOf(me))}</b><div class="chips">${chips(given(her))}</div></div>
+    ${missing ? `<p class="hint-line">💡 אולי השבוע: ${LANGS[missing].em} ${LANGS[missing].label} ל${esc(nameOf(her))}</p>` : ''}
+    <h3 class="section-title">עשיתי משהו השבוע ל${esc(nameOf(her))}</h3>
+    <div class="lang-log">${Object.entries(LANGS).map(([k, l]) => `<button data-log="${k}">${l.em}<span>${l.label}</span></button>`).join('')}</div>
+    <div class="btns" style="margin-top:14px">
+      <button class="btn violet" data-requiz>${S.love[me] ? 'למלא שוב את השאלון' : 'למלא את השאלון'}</button>
+      <button class="btn ghost" data-close>סגירה</button>
+    </div>`, (sheet) => {
+    sheet.querySelectorAll('[data-log]').forEach((b) => b.addEventListener('click', async () => {
+      await logLove(b.dataset.log); closeSheet(); openLove(); toast('נרשם 💜');
+    }));
+    sheet.querySelector('[data-requiz]').addEventListener('click', () => { closeSheet(); openQuiz(); });
+  });
+}
+
+function openQuiz() {
+  const qs = quizFor(S.me);
+  const scores = Object.fromEntries(Object.keys(LANGS).map((k) => [k, 0]));
+  let i = 0;
+  const step = () => {
+    const q = qs[i];
+    openSheet(`
+      <div class="quiz">
+        <div class="q-progress"><i style="width:${(i / qs.length) * 100}%"></i></div>
+        <p class="muted small">שאלה ${i + 1} מתוך ${qs.length}</p>
+        <h2>מה גורם לך להרגיש ${g4(S.me, 'אהוב', 'אהובה')} יותר?</h2>
+        <button class="q-opt" data-l="${q.a.lang}">${esc(q.a.text)}</button>
+        <div class="q-or">או</div>
+        <button class="q-opt" data-l="${q.b.lang}">${esc(q.b.text)}</button>
+      </div>`, (sheet) => {
+      sheet.querySelectorAll('.q-opt').forEach((b) => b.addEventListener('click', async () => {
+        scores[b.dataset.l]++;
+        i++;
+        if (i < qs.length) return step();
+        const { error } = await sb.from('love_profiles').upsert({ profile: S.me, scores, updated_at: new Date().toISOString() });
+        if (error) { closeSheet(); return toast('לא נשמר, נסו שוב'); }
+        S.love[S.me] = scores;
+        openSheet(`
+          <h2>💌 התוצאה שלך</h2>
+          <p class="muted" style="margin-top:-8px">מה הכי ממלא אותך, מלמעלה למטה. ${esc(nameOf(partner()))} ${g4(partner(), 'יקבל', 'תקבל')} כל שבוע הצעה למחווה, בעיקר מהדברים שבראש הרשימה.</p>
+          <div class="card flat">${scoreBars(scores)}</div>
+          <div class="btns"><button class="btn" data-close>סיום</button></div>`);
+        render();
+      }));
+    });
+  };
+  step();
 }

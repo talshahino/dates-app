@@ -42,10 +42,29 @@ export const ART = {
   car:      { m: '🚗', p: ['🌳', '☁️', '🌳'], ma: 'drive', pa: 'drift' },
   friends:  { m: '🥂', p: ['✨', '🎉', '✨'], ma: 'cheers', pa: 'twinkle' },
   gift:     { m: '🎁', p: ['✨', '💝', '🎀'], ma: 'shake', pa: 'twinkle' },
+  sofa:     { m: '🛋️', p: ['🍿', '💤', '💜'], ma: 'breathe', pa: 'twinkle' },
+  picnic:   { m: '🧺', p: ['🍓', '🥪', '🕯️'], ma: 'bounce', pa: 'juggle' },
+  photo:    { m: '📸', p: ['✨', '🖼️', '💕'], ma: 'shake', pa: 'twinkle' },
+  bake:     { m: '🧁', p: ['✨', '🍪', '🧈'], ma: 'bounce', pa: 'juggle' },
+  book:     { m: '📚', p: ['☕', '✨', '📖'], ma: 'sway', pa: 'twinkle' },
+  puzzle:   { m: '🧩', p: ['✨', '🧩', '💡'], ma: 'spin', pa: 'juggle' },
+  talk:     { m: '💬', p: ['💭', '💕', '💭'], ma: 'bob', pa: 'rise' },
+  plant:    { m: '🪴', p: ['💧', '🌱', '☀️'], ma: 'sway', pa: 'rise' },
+  yoga:     { m: '🧘‍♀️', p: ['🌿', '✨', '🕊️'], ma: 'breathe', pa: 'drift' },
+  bike:     { m: '🚴', p: ['🌳', '💨', '🌳'], ma: 'drive', pa: 'drift' },
+  tennis:   { m: '🎾', p: ['💥', '✨', '🏸'], ma: 'bounce', pa: 'juggle' },
+  climb:    { m: '🧗', p: ['🪨', '✨', '⛰️'], ma: 'bob', pa: 'twinkle' },
+  sup:      { m: '🏄', p: ['🌊', '🌊', '☀️'], ma: 'rock', pa: 'drift' },
+  hike:     { m: '🥾', p: ['🌲', '⛰️', '☀️'], ma: 'bob', pa: 'drift' },
+  spring:   { m: '🏞️', p: ['💧', '🌿', '🦋'], ma: 'bob', pa: 'drift' },
+  sunrise:  { m: '🌅', p: ['☁️', '🐦', '☀️'], ma: 'float', pa: 'drift' },
+  flowers:  { m: '🌻', p: ['🐝', '🌼', '☀️'], ma: 'sway', pa: 'drift' },
+  letter:   { m: '💌', p: ['💕', '✨', '💕'], ma: 'float', pa: 'rise' },
 };
 
 export const DEFAULT_ART = {
   food: 'dinner', spa: 'massage', shopping: 'shopping', experiences: 'theater', people: 'friends',
+  calm: 'sofa', sport: 'bike', nature: 'hike', learn: 'book', create: 'puzzle', romantic: 'letter', closeness: 'talk',
 };
 
 // fixed positions so the same idea always looks the same
