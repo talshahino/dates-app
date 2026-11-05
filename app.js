@@ -253,7 +253,7 @@ function renderShell() {
     const input = f.querySelector('input'); const body = input.value.trim(); if (!body) return;
     input.value = '';
     const { data, error } = await sb.from('date_notes').insert({ date_id: Number(f.dataset.date), profile: S.me, body }).select().single();
-    if (error) return toast('ההערה לא נשמרה');
+    if (error) { input.value = body; console.error(error); return toast(`ההערה לא נשמרה (${error.code || ''} ${error.message || ''})`); }
     if (!S.notes.some((n) => n.id === data.id)) S.notes.push(data);
     render();
   });
