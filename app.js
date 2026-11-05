@@ -93,6 +93,42 @@ function whenText(d) {
   return `ב${wd}, ${dt.getDate()}.${dt.getMonth() + 1}${t ? ',' + t : ''}`;
 }
 const notesOf = (dateId) => S.notes.filter((n) => n.date_id === dateId);
+const g4 = (p, m, f) => (p === 'eilat' ? f : m); // Hebrew verb by who is doing it
+
+// ---------- surprise date ----------
+function dateEnd(d) {
+  const end = new Date(`${d.date_on}T${(d.time_at || '20:00').slice(0, 5)}`);
+  end.setHours(end.getHours() + 3);
+  return end;
+}
+// the partner who did not plan it sees only the time and hints, until it is revealed or over
+const surpriseLocked = (d) => !!d.surprise_by && d.surprise_by !== S.me && !d.revealed && new Date() < dateEnd(d);
+const canOpen = (d) => surpriseLocked(d) && (!d.reveal_at || new Date() >= new Date(d.reveal_at));
+const titleFor = (d) => (surpriseLocked(d) ? 'דייט בהפתעה 🎁' : d.title);
+function revealText(d) {
+  if (!d.reveal_at) return 'בזמן הדייט';
+  const r = new Date(d.reveal_at);
+  const day = r.toLocaleDateString('en-CA');
+  const t = r.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
+  if (day === todayStr()) return `היום ב-${t}`;
+  if (day === todayStr(1)) return `מחר ב-${t}`;
+  return `${fmtDate(day)} ב-${t}`;
+}
+const hintsHtml = (d) => (d.hints || []).length
+  ? `<ul class="hints">${d.hints.map((h) => `<li>💡 ${esc(h.text)}</li>`).join('')}</ul>` : '';
+
+function surpriseCard(d, big = false) {
+  const ready = canOpen(d);
+  return `<div class="surprise-card ${big ? 'big' : ''} ${ready ? 'ready' : ''}">
+    <div class="gift" aria-hidden="true">🎁</div>
+    <div class="s-kicker">${esc(nameOf(d.surprise_by))} ${g4(d.surprise_by, 'מכין', 'מכינה')} לך הפתעה</div>
+    <h3>${esc(whenText(d))}</h3>
+    ${hintsHtml(d) || '<p class="s-muted">עוד אין רמזים. סבלנות 😉</p>'}
+    ${ready
+      ? `<button class="btn open-gift" data-act="reveal" data-id="${d.id}">🎉 לפתוח את ההפתעה</button>`
+      : `<div class="s-when">🔒 תיפתח ${esc(revealText(d))}</div>`}
+  </div>`;
+}
 const avatar = (p, cls = '') => `<span class="av av-${p} ${cls}"><img src="icons/${p}.svg" alt="${nameOf(p)}"></span>`;
 const ideaById = (id) => S.ideas.find((i) => i.id === id);
 const voteOf = (ideaId, profile) => S.votes.find((v) => v.idea_id === ideaId && v.profile === profile)?.value ?? 0;
@@ -248,6 +284,8 @@ function renderShell() {
   $('#who').addEventListener('click', openSettings);
   $('#main').addEventListener('click', onMainClick);
   $('#main').addEventListener('submit', async (e) => {
+    const hf = e.target.closest('.hint-add');
+    if (hf) { e.preventDefault(); return addHint(hf); }
     const f = e.target.closest('.note-add'); if (!f) return;
     e.preventDefault();
     const input = f.querySelector('input'); const body = input.value.trim(); if (!body) return;
@@ -311,7 +349,7 @@ function viewHome() {
   const next = up.find((d) => d.date_on !== todayStr());
   const focus = today[0] || next;
   const sub = focus
-    ? `<p>יש לכם דייט ${esc(whenText(focus))}</p><p class="what">${esc(focus.title)}${focus.place ? ', ' + esc(focus.place) : ''}</p>`
+    ? `<p>יש לכם דייט ${esc(whenText(focus))}</p><p class="what">${esc(titleFor(focus))}${focus.place && !surpriseLocked(focus) ? ', ' + esc(focus.place) : ''}</p>`
     : '<p>עוד לא קבעתם דייט. מה עושים השבוע?</p>';
 
   let html = `<section class="home-hero">
@@ -320,6 +358,7 @@ function viewHome() {
   </section>`;
 
   for (const d of today) {
+    if (surpriseLocked(d)) { html += surpriseCard(d, true); continue; }
     html += `<div class="reminder">
       <div class="kicker">⏰ ${esc(whenText(d))}</div>
       <h2>${esc(d.title)}</h2>
@@ -331,7 +370,8 @@ function viewHome() {
   if (!today.length && !next) {
     html += `<div class="card"><h3 style="font-size:21px">עוד לא קבעתם דייט השבוע</h3>
       <p class="muted" style="margin:6px 0 14px">מגרילים רעיון, כל אחד מצביע, וכשיש התאמה קובעים.</p>
-      <button class="btn" data-act="goto" data-tab="vote">🎲 להגריל רעיון</button></div>`;
+      <button class="btn" data-act="goto" data-tab="vote">🎲 להגריל רעיון</button>
+      <button class="btn ghost" style="margin-top:10px" data-act="surprise-new">🎁 לתכנן דייט בהפתעה</button></div>`;
   }
 
   if (pushState() === 'off' || pushState() === 'ios-install') {
@@ -460,6 +500,7 @@ function ideaRow(i, matched) {
 }
 
 function dateCard(d) {
+  if (surpriseLocked(d)) return surpriseCard(d);
   const past = d.status !== 'planned' || d.date_on < todayStr();
   const dt = new Date(d.date_on + 'T12:00:00');
   const status = d.status === 'done' ? ', היה ✓' : d.status === 'cancelled' ? ', בוטל' : '';
@@ -469,16 +510,26 @@ function dateCard(d) {
       <div class="when">${fmtDate(d.date_on)}${d.time_at ? ', ' + fmtTime(d.time_at) : ''}</div>
       <h3>${esc(d.title)}</h3>
       ${d.place ? `<div class="muted small">📍 ${esc(d.place)}</div>` : ''}
+      ${d.surprise_by === S.me && !past ? plannerBlock(d) : ''}
       ${notesBlock(d, !past)}
       ${d.feeling ? `<div class="feel-chip">${FEEL[d.feeling].em} ${FEEL[d.feeling].label}</div>` : ''}
       ${memStrip(d)}
       <div class="muted small" style="margin-top:6px">${esc(nameOf(d.created_by))} קבע/ה${status}</div>
       <div class="acts">
-        <button class="btn small ghost" data-act="edit-date" data-id="${d.id}">עריכה</button>
+        ${d.surprise_by && d.surprise_by !== S.me ? '' : `<button class="btn small ghost" data-act="edit-date" data-id="${d.id}">עריכה</button>`}
         ${d.status === 'planned' ? `<button class="btn small ghost" data-act="done-date" data-id="${d.id}">✓ היה</button>` : ''}
         ${d.status !== 'cancelled' ? `<button class="btn small ghost" data-act="add-mem" data-id="${d.id}">📷 תמונות</button>` : ''}
       </div>
     </div>
+  </div>`;
+}
+
+function plannerBlock(d) {
+  return `<div class="planner">
+    <div class="p-badge">🎁 הפתעה ל${esc(nameOf(partner()))}${d.revealed ? ', נחשפה ✓' : `, ${g4(partner(), 'הוא', 'היא')} רואה רק את השעה והרמזים`}</div>
+    ${hintsHtml(d)}
+    ${d.revealed ? '' : `<form class="hint-add" data-date="${d.id}"><input class="note-input" placeholder="+ רמז חדש, למשל: תביאי בגד ים" maxlength="120"><button aria-label="שליחת רמז">💡</button></form>
+    <div class="p-row"><span class="muted small">תיחשף ${esc(revealText(d))}</span><button class="linkish small" data-act="reveal-now" data-id="${d.id}">לחשוף עכשיו</button></div>`}
   </div>`;
 }
 
@@ -498,7 +549,8 @@ function viewDates() {
   const up = upcoming();
   const past = S.dates.filter((d) => !up.includes(d)).reverse();
   let html = '';
-  html += `<button class="btn" style="margin:6px 0 4px" data-act="schedule-free">📅 לקבוע דייט חדש</button>`;
+  html += `<div class="two-btns"><button class="btn" data-act="schedule-free">📅 דייט חדש</button>
+    <button class="btn violet" data-act="surprise-new">🎁 דייט בהפתעה</button></div>`;
   html += `<h3 class="section-title">מתוכננים</h3>`;
   html += up.length ? up.map(dateCard).join('') : `<div class="empty"><span class="ic">🗓️</span>אין דייטים מתוכננים כרגע.</div>`;
   if (past.length) html += `<h3 class="section-title">היו</h3>` + past.slice(0, 20).map(dateCard).join('');
@@ -542,6 +594,9 @@ function quickReplies() {
   const lastAny = S.messages.at(-1);
   if (lastTheirs && lastAny === lastTheirs) {
     if (lastTheirs.idea_id) return ['אהבתי! 😍', g('בוא נקבע 📅', 'בואי נקבע 📅'), 'אולי משהו אחר?', 'מתי?'];
+    if ((lastTheirs.body || '').startsWith('🎁')) return ['וואו! 😍', g4(S.me, 'אני מת לדעת!', 'אני מתה לדעת!'), 'עוד רמז? 🙏', 'כבר מחכה 🥰'];
+    if ((lastTheirs.body || '').startsWith('💡')) return [g4(S.me, 'יש לי ניחוש 🤔', 'יש לי ניחוש 🤔'), 'אני בעננים 😍', 'עוד רמז! 🙏'];
+    if ((lastTheirs.body || '').startsWith('🎉')) return ['ידעתי שתאהב/י ❤️'.replace('תאהב/י', g4(partner(), 'תאהב', 'תאהבי')), 'הכי כיף איתך 🥰'];
     if ((lastTheirs.body || '').startsWith('📅')) return ['מושלם, נתראה שם ❤️', 'אני אסדר בייביסיטר', 'אפשר שעה אחרת?', 'כבר מחכה 🥰'];
     if (lastTheirs.media_path || (lastTheirs.body || '').startsWith('📷')) return ['איזה יפה 😍', 'איזה ערב היה ❤️', 'עוד! 📸'];
     if ((lastTheirs.body || '').startsWith('🎬')) return ['בוכה 🥺❤️', 'הכי יפה שיש', 'עוד אחד כזה!'];
@@ -702,13 +757,16 @@ async function onMainClick(e) {
     case 'to-chat': await sendMessage({ body: 'מה דעתך על זה? 💭', idea_id: id }); go('chat'); break;
     case 'schedule': openSchedule({ idea: ideaById(id) }); break;
     case 'schedule-free': openSchedule({}); break;
-    case 'edit-date': openSchedule({ date: S.dates.find((d) => d.id === id) }); break;
+    case 'edit-date': { const d = S.dates.find((x) => x.id === id); d?.surprise_by ? openSurprise({ date: d }) : openSchedule({ date: d }); break; }
     case 'done-date': openFeedback(S.dates.find((d) => d.id === id)); break;
     case 'feel': await saveFeeling(id, b.dataset.f); break;
     case 'add-mem': pickMedia({ dateId: id, camera: false }); break;
     case 'camera': pickMedia({ dateId: S.albumDate, camera: true }); break;
     case 'gallery': pickMedia({ dateId: S.albumDate, camera: false }); break;
     case 'view-mem': openViewer(id); break;
+    case 'surprise-new': openSurprise({}); break;
+    case 'reveal': revealSurprise(S.dates.find((d) => d.id === id)); break;
+    case 'reveal-now': await revealNow(S.dates.find((d) => d.id === id)); break;
     case 'push-on': await enablePush(); break;
     case 'chat-img': openSheet(`<div class="viewer"><img data-path="${esc(b.dataset.path)}" alt=""></div><div class="btns"><button class="btn" data-close>סגירה</button></div>`, () => hydrateMedia()); break;
     case 'freq': await setFreq(b.dataset.f); break;
@@ -1140,7 +1198,7 @@ function viewAlbum() {
   <label class="field attach-to"><span>הרגעים יישמרו תחת</span>
     <select data-album-date>
       <option value="">בלי דייט מסוים</option>
-      ${recentDates.map((d) => `<option value="${d.id}" ${S.albumDate === d.id ? 'selected' : ''}>${esc(d.title)}, ${esc(fmtDate(d.date_on))}</option>`).join('')}
+      ${recentDates.map((d) => `<option value="${d.id}" ${S.albumDate === d.id ? 'selected' : ''}>${esc(titleFor(d))}, ${esc(fmtDate(d.date_on))}</option>`).join('')}
     </select>
   </label>`;
 
@@ -1319,4 +1377,118 @@ async function syncPush() {
     const sub = await reg.pushManager.getSubscription();
     if (sub) await saveSubscription(sub); else lsDel('dates-push');
   } catch {}
+}
+
+// ============================================================
+// Surprise date
+// ============================================================
+function revealIso(dateOn, timeAt, mode) {
+  if (mode === 'morning') return new Date(`${dateOn}T09:00`).toISOString();
+  if (mode === 'eve') { const d = new Date(`${dateOn}T20:00`); d.setDate(d.getDate() - 1); return d.toISOString(); }
+  return new Date(`${dateOn}T${timeAt || '20:00'}`).toISOString(); // at the time of the date
+}
+
+function openSurprise({ date = null }) {
+  const d = date || {};
+  const her = partner();
+  openSheet(`
+    <h2>🎁 ${date ? 'עריכת ההפתעה' : 'דייט בהפתעה'}</h2>
+    <p class="muted" style="margin-top:-8px">${esc(nameOf(her))} ${g4(her, 'יראה', 'תראה')} רק את השעה והרמזים, עד החשיפה.</p>
+    <form id="surp">
+      <label class="field"><span>מה עושים (סודי)</span><input name="title" required value="${esc(d.title || '')}" placeholder="למשל: ארוחת שף ביפו"></label>
+      <div class="row2">
+        <label class="field"><span>תאריך</span><input name="date_on" type="date" required value="${esc(d.date_on || '')}" min="${date ? '' : todayStr()}"></label>
+        <label class="field"><span>שעה</span><input name="time_at" type="time" required value="${esc(fmtTime(d.time_at) || '20:00')}"></label>
+      </div>
+      <label class="field"><span>איפה (סודי)</span><input name="place" value="${esc(d.place || '')}" placeholder="שם המקום"></label>
+      ${date ? '' : `<label class="field"><span>רמזים, כל שורה רמז (${esc(nameOf(her))} ${g4(her, 'יראה', 'תראה')} אותם)</span>
+        <textarea name="hints" placeholder="${g4(her, 'תלבש משהו נוח', 'תלבשי משהו נוח')}&#10;${g4(her, 'תביא', 'תביאי')} בגד ים&#10;יהיה טעים 😋"></textarea></label>`}
+      <label class="field"><span>מתי לחשוף</span>
+        <select name="reveal">
+          <option value="start">בשעת הדייט</option>
+          <option value="morning">בבוקר של היום, ב-9:00</option>
+          <option value="eve">בערב שלפני, ב-20:00</option>
+        </select>
+      </label>
+      <div class="btns">
+        <button class="btn violet" type="submit">${date ? 'שמירה' : '🎁 לשלוח הפתעה'}</button>
+        <button class="btn ghost" type="button" data-close>סגירה</button>
+      </div>
+    </form>`, (sheet) => {
+    sheet.querySelector('#surp').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = Object.fromEntries(new FormData(e.target));
+      const btn = e.target.querySelector('[type=submit]'); btn.disabled = true;
+      const row = {
+        title: fd.title.trim(), date_on: fd.date_on, time_at: fd.time_at || null, place: fd.place.trim() || null,
+        reveal_at: revealIso(fd.date_on, fd.time_at, fd.reveal),
+      };
+      let res;
+      if (date) {
+        res = await sb.from('dates').update(row).eq('id', d.id);
+      } else {
+        const hints = (fd.hints || '').split('\n').map((x) => x.trim()).filter(Boolean)
+          .map((text) => ({ text, at: new Date().toISOString() }));
+        res = await sb.from('dates').insert({ ...row, hints, surprise_by: S.me, created_by: S.me }).select().single();
+      }
+      if (res.error) { btn.disabled = false; return toast(`לא נשמר (${res.error.message || ''})`); }
+      if (!date) {
+        const first = res.data.hints?.[0]?.text;
+        await sendMessage({ body: `🎁 הכנתי לך דייט בהפתעה! ${whenText(row)}${first ? '\n💡 רמז: ' + first : ''}` });
+      }
+      closeSheet(); toast(date ? 'נשמר' : 'ההפתעה נשלחה 🎁');
+      await reloadDates(); render();
+    });
+  });
+}
+
+async function reloadDates() {
+  const { data } = await sb.from('dates').select('*').order('date_on').order('time_at', { nullsFirst: false });
+  S.dates = data || [];
+}
+
+async function addHint(form) {
+  const input = form.querySelector('input'); const text = input.value.trim(); if (!text) return;
+  const d = S.dates.find((x) => x.id === Number(form.dataset.date)); if (!d) return;
+  input.value = '';
+  const hints = [...(d.hints || []), { text, at: new Date().toISOString() }];
+  const { error } = await sb.from('dates').update({ hints }).eq('id', d.id);
+  if (error) { input.value = text; return toast(`הרמז לא נשמר (${error.message || ''})`); }
+  d.hints = hints; render();
+  await sendMessage({ body: `💡 רמז חדש להפתעה: ${text}` });
+  toast('הרמז נשלח 💡');
+}
+
+async function revealNow(d) {
+  if (!d || !confirm(`לחשוף עכשיו את ההפתעה ל${nameOf(partner())}?`)) return;
+  const { error } = await sb.from('dates').update({ revealed: true, revealed_by: S.me }).eq('id', d.id);
+  if (error) return toast('לא הצליח, נסו שוב');
+  Object.assign(d, { revealed: true, revealed_by: S.me }); render();
+  await sendMessage({ body: `🎉 חשפתי את ההפתעה: ${d.title}, ${whenText(d)}${d.place ? ', ' + d.place : ''}` });
+}
+
+function revealSurprise(d) {
+  if (!d) return;
+  const confetti = Array.from({ length: 18 }, (_, i) =>
+    `<span style="--a:${i * 20}deg;--d:${(i % 6) * 0.04}s">${['🎉', '💖', '✨', '🎊', '💜', '⭐'][i % 6]}</span>`).join('');
+  openSheet(`
+    <div class="reveal-stage">
+      <div class="burst">${confetti}</div>
+      <div class="big-gift">🎁</div>
+      <div class="revealed">
+        <div class="s-kicker">${esc(nameOf(d.surprise_by))} ${g4(d.surprise_by, 'הכין', 'הכינה')} לך</div>
+        <h2>${esc(d.title)}</h2>
+        <p>${esc(whenText(d))}${d.place ? `<br>📍 ${esc(d.place)}` : ''}</p>
+      </div>
+    </div>
+    <div class="btns"><button class="btn" data-close>איזה כיף! ❤️</button></div>`, async (sheet) => {
+    navigator.vibrate?.([30, 60, 30]);
+    setTimeout(() => sheet.querySelector('.reveal-stage').classList.add('open'), 1300);
+    const { error } = await sb.from('dates').update({ revealed: true, revealed_by: S.me }).eq('id', d.id);
+    if (!error) {
+      Object.assign(d, { revealed: true, revealed_by: S.me });
+      await sendMessage({ body: `🎉 פתחתי את ההפתעה! ${d.title} 😍` });
+      render();
+    }
+  });
 }

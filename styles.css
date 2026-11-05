@@ -605,3 +605,54 @@ main { overflow-x: clip; }
 /* hide anything injected by the hosting service (e.g. Netlify's toolbar) — only our own elements show */
 body > :not(#app):not(#sheet-root):not(#toast):not(script):not(input) { display: none !important; }
 html > :not(head):not(body) { display: none !important; }
+
+/* ---------- surprise date ---------- */
+.two-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 6px 0 4px; }
+.surprise-card {
+  position: relative; overflow: hidden; border-radius: 26px; padding: 20px; margin-bottom: 14px; color: #fff;
+  background: linear-gradient(140deg, #7B5CFF, #B44CF0 55%, #FF4F7B);
+  box-shadow: var(--shadow);
+}
+.surprise-card .gift {
+  position: absolute; top: 10px; inset-inline-end: 14px; font-size: 54px;
+  animation: wiggle 2.4s ease-in-out infinite; transform-origin: 50% 80%;
+}
+.surprise-card.ready .gift { animation-duration: .8s; }
+@keyframes wiggle { 0%, 60%, 100% { transform: rotate(0); } 70% { transform: rotate(-12deg); } 80% { transform: rotate(10deg); } 90% { transform: rotate(-6deg); } }
+.surprise-card .s-kicker { font-size: 14px; font-weight: 700; opacity: .9; }
+.surprise-card h3 { font-size: 24px; margin: 4px 0 10px; padding-inline-end: 60px; }
+.surprise-card.big h3 { font-size: 28px; }
+.hints { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.hints li { padding: 8px 12px; border-radius: 14px; background: rgba(255,255,255,.18); font-size: 15px; }
+.s-muted { margin: 0; opacity: .85; font-size: 15px; }
+.s-when { margin-top: 12px; font-size: 14px; font-weight: 700; opacity: .9; }
+.surprise-card .open-gift { margin-top: 14px; background: var(--sun); color: #1F1640; box-shadow: none; }
+
+.planner { margin-top: 10px; padding: 12px; border-radius: 16px; background: color-mix(in srgb, var(--violet) 12%, transparent); }
+.planner .p-badge { font-weight: 700; font-size: 14px; color: var(--violet); margin-bottom: 8px; }
+.planner .hints li { background: var(--surface); color: var(--ink); }
+.hint-add { display: flex; gap: 6px; margin-top: 8px; }
+.hint-add input {
+  flex: 1; min-width: 0; padding: 10px 12px; border-radius: 14px; border: 2px dashed var(--line);
+  background: transparent; font-size: 15px; outline: none;
+}
+.hint-add input:focus { border-style: solid; border-color: var(--violet); }
+.hint-add button { width: 42px; border-radius: 14px; background: var(--sun); font-size: 18px; }
+.p-row { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; gap: 8px; }
+
+.reveal-stage { position: relative; min-height: 300px; display: grid; place-items: center; text-align: center; overflow: hidden; }
+.big-gift { font-size: 120px; animation: shake .25s ease-in-out infinite; }
+@keyframes shake { 0%, 100% { transform: rotate(-6deg) scale(1); } 50% { transform: rotate(6deg) scale(1.06); } }
+.reveal-stage .revealed { position: absolute; inset: 0; display: grid; place-content: center; opacity: 0; transform: scale(.7); transition: all .5s cubic-bezier(.2,1.4,.4,1); padding: 10px; }
+.reveal-stage .revealed h2 { font-size: 32px; margin: 6px 0; color: var(--violet); }
+.reveal-stage .revealed p { font-size: 18px; margin: 0; }
+.reveal-stage .s-kicker { font-weight: 700; color: var(--ink-2); }
+.reveal-stage.open .big-gift { animation: none; transform: scale(0); opacity: 0; transition: all .3s; }
+.reveal-stage.open .revealed { opacity: 1; transform: none; }
+.burst { position: absolute; left: 50%; top: 50%; width: 0; height: 0; }
+.burst span { position: absolute; font-size: 26px; opacity: 0; }
+.reveal-stage.open .burst span { animation: fly 1.2s ease-out forwards; animation-delay: var(--d); }
+@keyframes fly {
+  0% { opacity: 1; transform: rotate(var(--a)) translateY(0) rotate(calc(-1 * var(--a))); }
+  100% { opacity: 0; transform: rotate(var(--a)) translateY(-170px) rotate(calc(-1 * var(--a))) scale(1.3); }
+}

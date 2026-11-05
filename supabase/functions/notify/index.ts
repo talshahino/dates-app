@@ -87,7 +87,8 @@ async function onEvent(table: string, op: string, r: Record<string, unknown>) {
 
   if (table === 'date_notes' && op === 'INSERT') {
     const from = r.profile as P;
-    const { data: d } = await sb.from('dates').select('title').eq('id', r.date_id).single();
+    const { data: d } = await sb.from('dates').select('title, surprise_by, revealed').eq('id', r.date_id).single();
+    if (d?.surprise_by && !d.revealed) return; // never spoil a surprise
     return send([PARTNER[from]], {
       title: `📝 ${NAME[from]} ${verb(from, 'הוסיף', 'הוסיפה')} הערה`,
       body: `${d?.title ?? 'לדייט'}: ${r.body}`, url: './', tag: `note-${r.date_id}`,
@@ -109,18 +110,38 @@ async function onCron() {
   const { data: dates } = await sb.from('dates').select('*').eq('status', 'planned');
 
   for (const d of dates || []) {
+    const secret = d.surprise_by && !d.revealed;
+    const planner = d.surprise_by as P;
+    const guest = secret ? PARTNER[planner] : null;
+    const hints = ((d.hints || []) as { text: string }[]).map((h) => h.text);
+    const full = `${d.title}${d.time_at ? ' בשעה ' + hhmm(d.time_at) : ''}${d.place ? ', ' + d.place : ''}`;
+
     // morning of the date
     if (d.date_on === today && hour === 8 && (await once(`morning-${d.id}`))) {
       const { count } = await sb.from('date_notes').select('id', { count: 'exact', head: true }).eq('date_id', d.id);
-      await send(BOTH, {
-        title: '⏰ היום יש לכם דייט!',
-        body: `${d.title}${d.time_at ? ' בשעה ' + hhmm(d.time_at) : ''}${d.place ? ', ' + d.place : ''}${count ? ` · ${count} הערות` : ''}`,
-        url: './', tag: `date-${d.id}`,
-      });
+      if (secret) {
+        await send([planner], { title: `⏰ היום ההפתעה ל${NAME[guest!]}!`, body: full, url: './', tag: `date-${d.id}` });
+        await send([guest!], {
+          title: '🎁 היום יש לך דייט בהפתעה!',
+          body: `${d.time_at ? 'בשעה ' + hhmm(d.time_at) : 'היום'}${hints.length ? ' · ' + hints.join(' · ') : ''}`,
+          url: './', tag: `date-${d.id}`,
+        });
+      } else {
+        await send(BOTH, { title: '⏰ היום יש לכם דייט!', body: `${full}${count ? ` · ${count} הערות` : ''}`, url: './', tag: `date-${d.id}` });
+      }
     }
     // two hours before
     if (d.date_on === today && d.time_at && Number(d.time_at.slice(0, 2)) - 2 === hour && (await once(`soon-${d.id}`))) {
-      await send(BOTH, { title: '⏳ עוד שעתיים', body: `${d.title}${d.place ? ', ' + d.place : ''}. מתרגשים? 💜`, url: './', tag: `date-${d.id}` });
+      if (secret) {
+        await send([planner], { title: '⏳ עוד שעתיים להפתעה', body: full, url: './', tag: `date-${d.id}` });
+        await send([guest!], { title: '⏳ עוד שעתיים להפתעה שלך 🎁', body: hints.length ? hints.join(' · ') : 'מתרגשים? 💜', url: './', tag: `date-${d.id}` });
+      } else {
+        await send(BOTH, { title: '⏳ עוד שעתיים', body: `${d.title}${d.place ? ', ' + d.place : ''}. מתרגשים? 💜`, url: './', tag: `date-${d.id}` });
+      }
+    }
+    // the surprise can be opened now
+    if (secret && d.reveal_at && new Date(d.reveal_at) <= new Date() && (await once(`reveal-${d.id}`))) {
+      await send([guest!], { title: '🎁 אפשר לפתוח את ההפתעה!', body: 'לחצו כדי לגלות לאן הולכים', url: './', tag: `surprise-${d.id}` });
     }
     // the morning after: how was it?
     if (d.date_on < today && hour === 10 && (await once(`ask-${d.id}`))) {
