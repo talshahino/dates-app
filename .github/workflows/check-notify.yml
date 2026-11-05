@@ -1,0 +1,23 @@
+name: Check notifier health
+
+on:
+  push:
+    branches: [main]
+    paths: ['supabase/checks/**']
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+    steps:
+      - name: Call the notifier's hourly routine and read its answer
+        run: |
+          q() { curl -sS -X POST "https://api.supabase.com/v1/projects/rbupwfcqodfgqmiugmsj/database/query" \
+                 -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" -H "Content-Type: application/json" \
+                 --data "$(jq -n --arg q "$1" '{query:$q}')"; }
+          q "select public.notify_call('{\"type\":\"cron\"}'::jsonb);" > /dev/null
+          sleep 12
+          out=$(q "select status_code, left(content::text, 300) as answer, created from net._http_response order by id desc limit 1;" | tr '\n' ' ')
+          echo "::notice title=health::$out"
