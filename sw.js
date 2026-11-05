@@ -1,5 +1,5 @@
 // Service worker: offline shell (push notifications added in stage 3)
-const CACHE = 'dates-v10';
+const CACHE = 'dates-v11';
 const SHELL = ['./', './index.html', './styles.css', './app.js', './scenes.js', './movie.js', './config.js', './supabase/functions/_shared/love.js', './manifest.webmanifest', './icons/icon-192.png'];
 
 self.addEventListener('install', (e) => {

@@ -201,6 +201,7 @@ async function startApp() {
   subscribe();
   render();
   syncPush();
+  if (params.get('quiz') && !S.love[S.me]) openQuiz();
   document.addEventListener('visibilitychange', () => { if (!document.hidden) loadAll().then(render); });
 }
 

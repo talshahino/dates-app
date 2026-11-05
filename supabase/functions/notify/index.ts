@@ -198,6 +198,20 @@ async function onCron() {
     }
   }
 
+  // invite whoever has not filled the love-language quiz yet (stops once they do)
+  if (isSlot('quiz')) {
+    const { data: filled } = await sb.from('love_profiles').select('profile');
+    const done = new Set((filled || []).map((x) => x.profile));
+    for (const p of BOTH) {
+      if (done.has(p) || !(await once(`quiz-${wk}-${p}`))) continue;
+      await send([p], {
+        title: `💌 מה גורם לך להרגיש ${verb(p, 'אהוב', 'אהובה')}?`,
+        body: `עשר שאלות קצרות, ו${NAME[PARTNER[p]]} ${verb(PARTNER[p], 'יקבל', 'תקבל')} כל שבוע רעיון למחווה שמתאימה בדיוק לך`,
+        url: './?quiz=1', tag: 'quiz',
+      });
+    }
+  }
+
   // love-movie reminders
   const { data: st } = await sb.from('settings').select('value').eq('key', 'movie_freq').maybeSingle();
   const freq = st?.value || 'week';
